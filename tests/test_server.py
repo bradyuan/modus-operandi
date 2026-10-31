@@ -11,7 +11,7 @@ def call(name, args):
 
 def test_tools_are_listed():
     names = {t.name for t in anyio.run(server.list_tools)}
-    assert names == {"mo_write", "mo_check", "mo_record", "mo_profile"}
+    assert names == {"mo_write", "mo_check", "mo_record", "mo_profile", "mo_tune"}
 
 
 def test_write_check_record_round_trip(mo_home):
@@ -22,10 +22,10 @@ def test_write_check_record_round_trip(mo_home):
     checked = call("mo_check", {"register": "cover_letter", "draft": "I'm excited to leverage synergy."})
     assert checked.structured_content["status"] == "failed_checks"
 
-    recorded = call("mo_record", {"kind": "variations", "register": "cover_letter",
-                                  "data": {"chosen": "b", "rejected": "a", "passed_over": ["c"]}})
+    recorded = call("mo_record", {"kind": "edit", "register": "cover_letter",
+                                  "data": {"before": "a", "after": "b"}})
     assert recorded.structured_content["recorded"].startswith("c")
-    assert Profile("default").cases()[0]["data"]["chosen"] == "b"
+    assert Profile("default").cases()[0]["data"]["after"] == "b"
 
 
 def test_bad_profile_name_is_rejected(mo_home):

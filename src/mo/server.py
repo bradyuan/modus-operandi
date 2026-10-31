@@ -1,7 +1,7 @@
 """MO's MCP server: a harness that supplies state to the host AI and checks its output.
 
 MO makes no LLM calls (AGENTS.md, core design item 1). The host writes; MO hands it
-kits, checks drafts, records the user's picks and edits, and manages profiles.
+kits, checks drafts, runs tune rounds, records the user's feedback, and manages profiles.
 """
 
 from __future__ import annotations
@@ -16,11 +16,11 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 
-from mo import checks, kits, style
+from mo import checks, kits, style, tune
 from mo.store import (
     REGISTERS,
-    PendingSamples,
     Profile,
+    RecentDrafts,
     active_profile,
     list_profiles,
     log_call,
@@ -33,14 +33,16 @@ from mo.store import (
 Register = Literal["email", "essay", "cover_letter", "article", "notes", "other"]
 assert set(REGISTERS) == set(Register.__args__)  # keep the tool schema in sync with storage
 
+
 def user_errors(fn):
-    """Surface validation errors to the host: the SDK hides plain exceptions' text."""
+    """Surface validation errors to the host (the SDK hides plain exceptions' text) and log them."""
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
         except ValueError as exc:
+            log_call(fn.__name__, {"action": kwargs.get("action"), "error": str(exc)})
             raise ToolError(str(exc)) from exc
 
     return wrapper
@@ -52,8 +54,9 @@ server = MCPServer(
     instructions=(
         "MO keeps the user's persistent profile of how they write and read. Call mo_write before "
         "writing anything for the user, follow the kit's steps, and call mo_check before showing a "
-        "draft. Use mo_profile to list, create, or switch profiles, save the user's own writing "
-        "samples, or run diagnostics. MO never writes text itself; you do, using the kit."
+        "draft. When the user wants changes or variations, use mo_tune and follow its replies exactly. "
+        "Use mo_profile to list, create, or switch profiles and to save the user's own writing. MO "
+        "never writes text itself; you do, using the kit."
     ),
 )
 
@@ -64,9 +67,10 @@ server = MCPServer(
         "Use whenever the user wants something written (essay, cover letter, email, article, notes), "
         "including casual requests like 'write an essay about X @MO'. Call this BEFORE drafting. "
         "Returns a kit: the user's voice rules, exemplars of their own writing, and steps to follow. "
-        "Pass the user's own words for this piece as `seed` (verbatim), facts about them (resume, notes) "
-        "as `facts`, and the job description or assignment as `requirements`. Omit `profile` to use "
-        "the active one."
+        "IMPORTANT: if the user gave ANY of their own words for this piece (notes, bullets, a rough line, "
+        "why they want the job), pass them verbatim as `seed`. Facts about them (resume, notes) go in "
+        "`facts`, and the job description or assignment in `requirements`. Omit `profile` to use the "
+        "active one."
     ),
 )
 @user_errors
@@ -117,22 +121,58 @@ def mo_check(
         keywords=keywords,
         exemplars=exemplars,
     )
+    RecentDrafts().remember(draft)
     log_call("mo_check", {"profile": p.name, "register": register, "status": result["status"],
                           "flags": [f["type"] for f in result["flags"]]})
     return result
 
 
 @server.tool(
+    title="Tune: variations until one fits",
+    description=(
+        "Use for '@MO tune', 'I don't like this', 'give me alternatives', or to calibrate the user's "
+        "profile. action='start' with mode='draft' to fix part of a draft (pass that part as `target`), "
+        "or mode='diagnostic' to calibrate (task 'writing', or 'reading' with the blog or paper as "
+        "`source`). Then pass every user answer with action='answer', the session id, and outcome: "
+        "'picked' (with chosen A/B/C), 'none_fit' if they reject all three, or 'skipped' if they want to "
+        "move on. MO decides what happens next; follow its reply exactly."
+    ),
+)
+@user_errors
+def mo_tune(
+    action: Literal["start", "answer"],
+    session: str | None = None,
+    outcome: Literal["picked", "none_fit", "skipped"] | None = None,
+    chosen: Literal["A", "B", "C"] | None = None,
+    note: str | None = None,
+    mode: Literal["draft", "diagnostic"] = "draft",
+    task: Literal["writing", "reading"] = "writing",
+    register: Register | None = None,
+    target: str | None = None,
+    source: str | None = None,
+    profile: str | None = None,
+) -> dict[str, Any]:
+    if action == "start":
+        p = resolve_profile(profile)
+        result = tune.start(p, task, mode, validate_register(register) if register else None, target, source)
+    else:
+        result = tune.answer(_require(session, "session"), _require(outcome, "outcome"), chosen, note)
+    log_call("mo_tune", {"action": action, "profile": result["profile"], "mode": mode if action == "start" else None,
+                         "outcome": outcome, "status": result["status"]})
+    return result
+
+
+@server.tool(
     title="Record feedback",
     description=(
-        "Call when the user picks between versions ('variations': pass chosen, rejected, passed_over, "
-        "and what was varied) or edits a draft ('edit': pass before and after). Use 'system' for "
-        "failed checks, which are not preferences. Store only the relevant span, not whole documents."
+        "Call when the user edits a draft themselves ('edit': pass the changed span before and after) "
+        "or rates something ('rating'). Use 'system' for failed checks, which are not preferences. "
+        "Picks between variations are recorded by mo_tune, not here. Store only the relevant span."
     ),
 )
 @user_errors
 def mo_record(
-    kind: Literal["variations", "edit", "rating", "system"],
+    kind: Literal["edit", "rating", "system"],
     data: dict[str, Any],
     task: Literal["writing", "reading"] = "writing",
     register: Register | None = None,
@@ -141,7 +181,7 @@ def mo_record(
     p = resolve_profile(profile)
     case = {"type": kind, "task": task, "register": validate_register(register) if register else None, "data": data}
     case_id = p.append_case(case)
-    log_call("mo_record", {"profile": p.name, "kind": kind, "task": task, "diagnostic": bool(data.get("diagnostic"))})
+    log_call("mo_record", {"profile": p.name, "kind": kind, "task": task})
     return {"recorded": case_id, "profile": p.name}
 
 
@@ -149,32 +189,26 @@ def mo_record(
     title="Manage the user's profile",
     description=(
         "Use for '@MO profile' and anything about the user's MO profiles: list them ('list'), create one "
-        "('create', name), switch ('use', name), or see what's in one ('show'). To save the user's OWN "
-        "writing as a sample, call 'add_sample' (register, text): it saves nothing yet and returns a code; "
-        "ask the user the returned question, and only after they say yes call 'confirm' with the code. "
-        "Never add text you wrote, and never confirm for the user. Remove a sample with 'remove_sample' "
-        "(register, sample). To calibrate, call 'diagnostic' (kind 'writing' or 'reading'; for reading, "
-        "pass the blog or paper as `source`) and follow its steps."
+        "('create', name), switch ('use', name), or see what's in one ('show'). When the user says to use "
+        "or save text as a sample of their writing, call 'add_sample' (register, text) right away: their "
+        "request is the confirmation. Never add text you wrote. Remove a sample with 'remove_sample' "
+        "(register, sample)."
     ),
 )
 @user_errors
 def mo_profile(
-    action: Literal["list", "create", "use", "show", "add_sample", "confirm", "remove_sample", "diagnostic"],
+    action: Literal["list", "create", "use", "show", "add_sample", "remove_sample"],
     name: str | None = None,
     register: Register | None = None,
     text: str | None = None,
     sample: str | None = None,
-    code: str | None = None,
-    kind: Literal["writing", "reading"] = "writing",
-    round: int = 1,
-    source: str | None = None,
 ) -> dict[str, Any]:
-    result = _profile_action(action, name, register, text, sample, code, kind, round, source)
+    result = _profile_action(action, name, register, text, sample)
     log_call("mo_profile", {"action": action, "profile": result.get("profile")})
     return result
 
 
-def _profile_action(action, name, register, text, sample, code, kind, round_number, source) -> dict[str, Any]:
+def _profile_action(action, name, register, text, sample) -> dict[str, Any]:
     if action == "list":
         return {"profiles": list_profiles(), "active": active_profile(), "profile": active_profile()}
 
@@ -185,7 +219,8 @@ def _profile_action(action, name, register, text, sample, code, kind, round_numb
         p.root.mkdir(parents=True)
         set_active_profile(p.name)
         return {"profile": p.name, "active": True,
-                "next": "Seed it: paste writing samples the user wrote (add_sample), or run a diagnostic."}
+                "next": "Seed it: save writing the user wrote (add_sample), or calibrate with mo_tune "
+                        "(mode='diagnostic')."}
 
     if action == "use":
         p = Profile(_require(name, "name"))
@@ -208,26 +243,13 @@ def _profile_action(action, name, register, text, sample, code, kind, round_numb
         p = resolve_profile(name)
         reg = validate_register(_require(register, "register"))
         body = _require(text, "text").strip()
-        words = len(style.words(body))
-        pending_code = PendingSamples().add(p.name, reg, sample or f"{reg}-sample", body)
-        return {
-            "status": "needs_confirmation",
-            "profile": p.name,
-            "code": pending_code,
-            "preview": body[:200] + ("…" if len(body) > 200 else ""),
-            "ask_user": f"Save this {words}-word {reg.replace('_', ' ')} as your own writing in profile "
-                        f"'{p.name}'? Only save text you wrote yourself.",
-            "steps": ["Ask the user `ask_user` word for word and wait for a clear yes.",
-                      "Only then call mo_profile(action='confirm', code=<code>). Never confirm for the user."],
-        }
-
-    if action == "confirm":
-        item = PendingSamples().pop(_require(code, "code"))
-        if item is None:
-            raise ValueError("Unknown or expired code; call add_sample again")
-        p = Profile(item["profile"])
-        saved = p.add_exemplar(item["register"], item["name"], item["text"])
-        return {"profile": p.name, "saved": saved, "register": item["register"]}
+        if RecentDrafts().similarity(body) >= RecentDrafts.MATCH:
+            raise ValueError(
+                "Not saved: this closely matches a draft MO checked recently, so it looks AI-written. Only "
+                "save writing the user wrote themselves. If they rewrote it, save their rewritten version."
+            )
+        saved = p.add_exemplar(reg, sample or f"{reg}-sample", body)
+        return {"profile": p.name, "saved": saved, "register": reg, "words": len(style.words(body))}
 
     if action == "remove_sample":
         p = resolve_profile(name)
@@ -235,11 +257,6 @@ def _profile_action(action, name, register, text, sample, code, kind, round_numb
         if not p.remove_exemplar(reg, _require(sample, "sample")):
             raise ValueError(f"No {reg} sample named {sample!r} in profile {p.name!r}")
         return {"profile": p.name, "removed": sample, "register": reg}
-
-    if action == "diagnostic":
-        if round_number < 1:
-            raise ValueError("round starts at 1")
-        return kits.diagnostic_kit(resolve_profile(name), kind, round_number, source)
 
     raise ValueError(f"Unknown action {action!r}")
 
@@ -282,7 +299,8 @@ def main() -> None:
         local_hosts.append(host)
         local_origins.append(f"https://{host}")
         path = f"/mcp/{_secret()}"
-        print(f"\nMO is reachable at: https://{host}{path}\nKeep this link private: it gives access to your profile.\n", flush=True)
+        print(f"\nMO is reachable at: https://{host}{path}\nKeep this link private: it gives access to your profile.\n",
+              flush=True)
     security = TransportSecuritySettings(allowed_hosts=local_hosts, allowed_origins=local_origins)
     server.run(transport="streamable-http", port=args.port, streamable_http_path=path, transport_security=security)
 

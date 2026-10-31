@@ -33,14 +33,14 @@ MO keeps a **persistent profile of you** and applies it in two directions:
 ## 2. The feedback loop
 
 ```
-  result ──► "@MO evolve" ──► host makes 3 variations (as MO specifies) ──► you pick one
+  result ──► "@MO tune" ──► host makes 3 variations (as MO specifies) ──► you pick one
       ▲                                                                       │
       │                                                                       ▼
   next results ◄── rules (weighted) ◄── canonical cases ◄── individual cases (logged by MO)
   use the rules     (approved via yes/no)    (compacted)
 ```
 
-1. **Reject:** `@MO evolve`, or "I don't like this" (optionally, why).
+1. **Reject:** `@MO tune`, or "I don't like this" (optionally, why).
 2. **Variations:** MO's kit tells the host to make **3 variations that each differ in one way** (e.g. mechanism-first / analogy-first / example-first). Because MO chose the differences, your pick shows *why* without you having to type it.
 3. **Pick:** MO logs it as an individual case: the rejected result, the chosen variation, and the ones passed over.
    - **None fit?** MO asks for 3 more, changing something different (e.g. depth or format instead of the opening). Every rejected variation is logged. After two rejected rounds, the host briefly asks what's off.
@@ -104,7 +104,7 @@ Individual cases  →  Candidates  →  Rules (canonical cases)
 | Step | How | Who decides |
 |---|---|---|
 | Profile | Named explicitly ("as journal"), else the last-used one, else the default | MO |
-| Task | `read` / `write` / `evolve` | The host, by picking the tool |
+| Task | `read` / `write` / `tune` | The host, by picking the tool |
 | Register | A `register` input with a fixed list of values (email, essay, cover letter, article…). The widget shows it so you can correct it. | The host proposes, MO validates |
 | Rules | Every rule for that task and register with weight ≥ 0.5, ranked by weight. The profile is compact, so it almost always fits whole. | MO |
 | Exemplars | Filter by register, then the 1–3 **most representative of your style** (closest to your stylometric average) and highest-rated | MO |
@@ -171,7 +171,7 @@ cases:                  # archive; source of truth
     claims · mechanism · examples · prerequisites · background ·
     caveats/limitations · quotes with locations
  ③ Host shapes the explanation using your rules (cut, reorder, choose analogies, set depth)
- ④ @MO evolve → 3 variations, shaped from the same gathered material
+ ④ @MO tune → 3 variations, shaped from the same gathered material
 ```
 
 - **Gather broadly, then cut.** Dropping what you don't need is reliable. Adding what was never gathered isn't.
@@ -192,7 +192,7 @@ The piece is built **from your voice outward**, not from the facts with your voi
       (copied phrases, AI tells, seed retention, voice distance, unsupported facts, coverage)
  ④ Host fixes the flagged parts (up to 2 tries), then shows the draft via mo_present,
       which re-checks it and displays it with its check status (§11.6)
- ⑤ Widget: @MO evolve → 3 variations · edit inline → mo_record → cases → funnel
+ ⑤ Widget: @MO tune → 3 variations · edit inline → mo_record → cases → funnel
 ```
 
 | Source | Role |
@@ -226,7 +226,7 @@ Your voice isn't frozen. It **evolves, but only through suggestions you accept.*
            build the subject through the people around it
 ```
 
-- **Adding an influence:** `@MO evolve` + "here's a perfect example." You can say what you like about it. The host names **specific techniques**, and MO stores them as candidates.
+- **Adding an influence:** `@MO tune` + "here's a perfect example." You can say what you like about it. The host names **specific techniques**, and MO stores them as candidates.
 - **Evolving:** one of the 3 variations can apply an influence technique. If you pick it, the technique gains weight, and it can eventually become a rule ("open with a scene. From Talese.").
 - **Techniques, not sentences.** `mo_check`'s copied-phrase lint also runs against influence texts. Borrowing a technique is craft; borrowing sentences is plagiarism.
 - **Watch for pastiche.** Drifting toward Talese is still drift. An influence's weight is capped, and `mo_check` measures voice distance from your base voice.
@@ -280,28 +280,28 @@ Your voice isn't frozen. It **evolves, but only through suggestions you accept.*
 One MO MCP server
  ├─ mo_read(source?, modifiers)       → reading kit: rules + gathering schema + steps
  ├─ mo_write(seed?, facts, reqs, mods)→ writing kit: voice rules + exemplars + steps
- ├─ mo_evolve(target, example?)       → variation plan: the 3 differences to try
+ ├─ mo_tune(start | answer, ...)     → variation rounds; MO decides the next step (picked / none_fit / skipped)
  ├─ mo_check(draft, context)          → flags (plain code, no LLM)
  ├─ mo_present(draft, context)        → runs the checks, then shows the draft in the widget with its status
  ├─ mo_record(pick / edit)            → logs a case
  ├─ mo_calibrate()                    → yes/no rule suggestions; stores approved changes
- ├─ mo_profile(action, ...)           → list/create/use/show profiles; add_sample → confirm (two-step);
- │                                      remove_sample; diagnostic (writing/reading calibration rounds)
+ ├─ mo_profile(action, ...)           → list/create/use/show profiles; add_sample (one step; rejects text matching recent MO drafts);
+ │                                      remove_sample
  └─ widget UI                         → buttons, selecting parts, editing inline
 ```
 
-**How the host picks a tool:** each tool has a name, a plain-English description, and inputs. The host's AI matches what you typed to the descriptions, the same way `@Google Drive find my resume` maps to Drive's search tool. So "@MO I don't like this" reaches `mo_evolve` without an exact command.
+**How the host picks a tool:** each tool has a name, a plain-English description, and inputs. The host's AI matches what you typed to the descriptions, the same way `@Google Drive find my resume` maps to Drive's search tool. So "@MO I don't like this" reaches `mo_tune` without an exact command.
 
 | Command users see | Tool | What happens |
 |---|---|---|
 | `@MO read <source>` | `mo_read` | Explanation shaped to you (§6) |
 | `@MO write <notes/seed>` | `mo_write` | Voice-first draft (§7) |
-| `@MO evolve` | `mo_evolve` | **The picker:** 3 variations for the last result or the selected part |
-| `@MO evolve` + "here's a perfect example" | `mo_evolve` | Adds an example/influence; variations borrow its techniques (§8) |
-| `@MO evolve` + "give me variations" | `mo_evolve` | More variations, changing something different each round |
+| `@MO tune` | `mo_tune` | **The picker:** 3 variations for the last result or the selected part |
+| `@MO tune` + "here's a perfect example" | `mo_tune` | Adds an example/influence; variations borrow its techniques (§8) |
+| `@MO tune` + "give me variations" | `mo_tune` | More variations, changing something different each round |
 
 - The host calls the helper tools (`mo_check`, `mo_record`, `mo_calibrate`) on its own, because each kit's steps tell it to.
-- **Evolve vs. Calibrate:** `evolve` affects the *current piece* and logs cases. Only an approved yes/no question changes the persistent profile. A "perfect example" applies to the current piece and is logged as a **candidate influence**.
+- **Evolve vs. Calibrate:** `tune` affects the *current piece* and logs cases. Only an approved yes/no question changes the persistent profile. A "perfect example" applies to the current piece and is logged as a **candidate influence**.
 - **Reading works the same way.** A "perfect example" can be an explanation that clicked for you once.
 - **MCP prompts:** a server can also offer ready-made prompt templates that some hosts show as a menu or slash commands (e.g. `/mo-write`). Claude supports these; check whether ChatGPT does.
 - **Why a widget:**
@@ -382,7 +382,7 @@ MO controls **its own tools**, not ordinary host replies. No host lets a third-p
 
 | Tier | How | Strength |
 |---|---|---|
-| **Harnessed** | `@MO read` / `write` / `evolve`: kits, `mo_check`, picker | Strong, but only when invoked |
+| **Harnessed** | `@MO read` / `write` / `tune`: kits, `mo_check`, picker | Strong, but only when invoked |
 | **Ambient** | MO exports a short summary of your top rules to paste into ChatGPT Custom Instructions / Claude styles or project instructions | Weak and unchecked, but applies to every reply |
 
 - **Positioning:** MO is what you call when it matters (a job application, an essay, a hard paper), not for "what's the capital of France."
@@ -394,7 +394,7 @@ MO controls **its own tools**, not ordinary host replies. No host lets a third-p
 |---|---|---|
 | **Widget buttons** | ✅ Enforced | Call MO's tools directly, with no host model in the loop |
 | **`mo_present`** | ✅ Enforced for MO's UI | The only way into the widget, and it runs the checks itself. Text the host pastes into chat instead is visibly not MO's output. |
-| **Steps in each kit** | Usually followed | "Write from the seed. Treat the JD as a checklist. Call `mo_check` before showing. Make exactly these 3 variations. Call `mo_evolve` for further changes." This is also the text-only fallback. |
+| **Steps in each kit** | Usually followed | "Write from the seed. Treat the JD as a checklist. Call `mo_check` before showing. Make exactly these 3 variations. Call `mo_tune` for further changes." This is also the text-only fallback. |
 | **Tool descriptions** | Discovery only | Tell the host when to call MO |
 
 Not enforceable: free-typed revisions without `@MO` ("make it punchier"). Kit steps reduce these, but they can't be eliminated.
@@ -412,7 +412,7 @@ Not enforceable: free-typed revisions without `@MO` ("make it punchier"). Kit st
 | Misquoted source (reading) | `mo_check` verifies quotes word for word against the source text passed in the request | Drop or fix the quote, and mark the claim "unverified" |
 | Host skipped the checks | `mo_present` checks anyway; telemetry | The draft shows ⚠️ with its flags |
 | Wrong register or profile | Shown in the widget | One tap to correct it, and it's logged |
-| Fuzzy wrong (doesn't sound like you, unclear) | **Only you** | `evolve` or an edit |
+| Fuzzy wrong (doesn't sound like you, unclear) | **Only you** | `tune` or an edit |
 
 **Retry rules:**
 1. **Targeted, not regenerated.** Rewrite only the flagged part, and say exactly why.
@@ -431,7 +431,7 @@ Not enforceable: free-typed revisions without `@MO` ("make it punchier"). Kit st
 - **Invented facts (writing).** `mo_check` flags numbers and names not in the fact sheet.
 - **Wrong matches.** A case assigned to the wrong rule strengthens that rule without anyone noticing. Spot checks in calibration catch this.
 - **Contaminated samples.** If writing samples were already AI-assisted, MO would be preserving AI voice.
-- **Revisions outside MO.** "Make it punchier" typed to ChatGPT skips MO's kit and checks. Revisions should go through `evolve` or the widget.
+- **Revisions outside MO.** "Make it punchier" typed to ChatGPT skips MO's kit and checks. Revisions should go through `tune` or the widget.
 - **Pastiche.** Influences can pull the voice toward someone else's (§8).
 - **Academic and workplace policies.** Some schools and employers restrict AI-assisted writing. That's the user's call, but MO shouldn't hide that it was used.
 

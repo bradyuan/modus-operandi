@@ -3,8 +3,9 @@
 v0.1 keeps everything as human-readable files under ``$MO_HOME`` (default ``~/.mo``)::
 
     active                     name of the active profile
-    pending.json               writing samples awaiting the user's confirmation
-    logs/calls.jsonl           one line per tool call
+    recent_drafts.json         hashed fingerprints of drafts MO checked (drift guard)
+    sessions/<id>.json         @MO tune session state
+    logs/calls.jsonl           one line per tool call, including failures
     profiles/<name>/
         profile.yaml           rules, candidates
         cases.jsonl            append-only case archive (source of truth)
@@ -13,10 +14,10 @@ v0.1 keeps everything as human-readable files under ``$MO_HOME`` (default ``~/.m
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
-import secrets
 import time
 import uuid
 from dataclasses import dataclass
@@ -29,7 +30,8 @@ import yaml
 DEFAULT_PROFILE = "default"
 REGISTERS = ("email", "essay", "cover_letter", "article", "notes", "other")
 MAX_CASE_TEXT = 4000
-PENDING_TTL = 30 * 60
+DRAFT_TTL = 14 * 24 * 3600
+MAX_DRAFTS = 50
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,39}$")
 _FRONT_MATTER_RE = re.compile(r"\A---\n(.*?)\n---\n", re.DOTALL)
@@ -164,33 +166,47 @@ def resolve_profile(name: str | None) -> Profile:
     return Profile(name or active_profile())
 
 
-class PendingSamples:
-    """Writing samples waiting for the user's explicit yes (the guard against saving AI text)."""
+class RecentDrafts:
+    """Fingerprints of drafts MO checked, so AI-written text can't be saved as the user's writing.
+
+    Only hashed word 5-grams are stored, never the text.
+    """
+
+    SHINGLE = 5
+    MATCH = 0.5
 
     def __init__(self, home: Path | None = None):
-        self.path = (home or mo_home()) / "pending.json"
+        self.path = (home or mo_home()) / "recent_drafts.json"
 
-    def _load(self) -> dict[str, Any]:
-        items = json.loads(self.path.read_text()) if self.path.exists() else {}
+    @classmethod
+    def fingerprint(cls, text: str) -> set[str]:
+        words = re.findall(r"[a-z0-9']+", text.lower())
+        grams = {" ".join(words[i : i + cls.SHINGLE]) for i in range(len(words) - cls.SHINGLE + 1)}
+        return {hashlib.sha256(g.encode()).hexdigest()[:12] for g in grams}
+
+    def _load(self) -> list[dict[str, Any]]:
+        items = json.loads(self.path.read_text()) if self.path.exists() else []
         now = time.time()
-        return {code: item for code, item in items.items() if now - item["created"] < PENDING_TTL}
+        return [item for item in items if now - item["at"] < DRAFT_TTL]
 
-    def _save(self, items: dict[str, Any]) -> None:
+    def remember(self, draft: str) -> None:
+        shingles = self.fingerprint(draft)
+        if not shingles:
+            return
+        items = self._load()[-(MAX_DRAFTS - 1):] + [{"at": time.time(), "shingles": sorted(shingles)}]
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(items, ensure_ascii=False))
+        self.path.write_text(json.dumps(items))
 
-    def add(self, profile: str, register: str, name: str, text: str) -> str:
-        items = self._load()
-        code = secrets.token_hex(3).upper()
-        items[code] = {"profile": profile, "register": register, "name": name, "text": text, "created": time.time()}
-        self._save(items)
-        return code
-
-    def pop(self, code: str) -> dict[str, Any] | None:
-        items = self._load()
-        item = items.pop(code.strip().upper(), None)
-        self._save(items)
-        return item
+    def similarity(self, text: str) -> float:
+        """Highest overlap with any recent draft, in either direction (0..1)."""
+        sample = self.fingerprint(text)
+        best = 0.0
+        for item in self._load():
+            draft = set(item["shingles"])
+            shared = len(sample & draft)
+            if sample and draft:
+                best = max(best, shared / len(sample), shared / len(draft))
+        return best
 
 
 def log_call(tool: str, details: dict[str, Any], home: Path | None = None) -> None:

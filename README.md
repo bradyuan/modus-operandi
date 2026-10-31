@@ -49,7 +49,7 @@ Ordinary LLMs start fresh, or rely on loose memory and instructions that drift o
 
 ## 5. Planned delivery
 
-MO is planned as an [MCP](https://modelcontextprotocol.io) app, so one profile works across ChatGPT, Claude, and other AI tools: type `@MO read`, `@MO write`, or `@MO evolve`.
+MO is planned as an [MCP](https://modelcontextprotocol.io) app, so one profile works across ChatGPT, Claude, and other AI tools: type `@MO read`, `@MO write`, or `@MO tune`.
 
 MO is a **harness**, not another AI. It keeps your profile, hands it to the AI you're already using, and checks the result. Your data is kept to a minimum, encrypted, and yours to export or delete.
 
@@ -80,7 +80,7 @@ In ChatGPT: **Settings → Apps & Connectors → Advanced → Developer mode**, 
 
 ### Profiles
 
-Manage profiles from inside ChatGPT with `@MO profile`: list, create, and switch profiles, save your own writing samples (MO asks you to confirm each one), and run writing or reading diagnostics.
+Manage profiles from inside ChatGPT with `@MO profile`: list, create, and switch profiles, save your own writing samples ("use this essay as a sample" saves it right away). Use `@MO tune` to get variations until one fits, or to calibrate with a writing or reading diagnostic.
 
 Data lives in `~/.mo/` (override with `MO_HOME`): profiles in `profiles/<name>/`, a tool-call log in `logs/calls.jsonl`. Samples are plain files in `profiles/<name>/exemplars/<register>/`, where register is one of `email`, `essay`, `cover_letter`, `article`, `notes`, or `other`. Never commit them.
 

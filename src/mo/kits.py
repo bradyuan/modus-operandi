@@ -22,62 +22,9 @@ WRITING_STEPS = [
     "Apply RULES: 'always' rules strictly, 'prefer' rules where they fit. Apply MODIFIERS to this piece only.",
     "Before showing the draft, call mo_check with it. Fix only the flagged parts, at most 2 tries, "
     "and keep the version with the fewest flags.",
-    "When the user picks between versions or edits the draft, call mo_record.",
+    "If the user dislikes the draft or part of it, call mo_tune(action='start', mode='draft', ...). "
+    "When the user edits the draft themselves, call mo_record with kind='edit'.",
 ]
-
-
-DIAGNOSTIC_ROUNDS = 5
-DIAGNOSTIC_AXES = {
-    "reading": [
-        ("opening", ["mechanism first (how it works)", "analogy first (from a field the user knows)",
-                     "concrete example first"]),
-        ("order", ["bottom line first", "build up to the point", "start from a question"]),
-        ("depth", ["short (3–4 sentences)", "medium (a paragraph or two)", "deep (full detail)"]),
-        ("format", ["plain prose", "bullet points", "a small diagram or table plus prose"]),
-        ("background", ["no background", "one line of background", "full historical context"]),
-    ],
-    "writing": [
-        ("tone", ["plain and direct", "vivid and concrete", "punchy and confident"]),
-        ("rhythm", ["short sentences", "mixed short and long", "long, flowing sentences"]),
-        ("opening", ["start with a story or scene", "start with the main point", "start with a question"]),
-        ("formality", ["casual", "neutral", "formal"]),
-        ("detail", ["lean: only what matters", "some supporting detail", "rich detail and specifics"]),
-    ],
-}
-
-
-def diagnostic_kit(profile: Profile, kind: str, round_number: int = 1, source: str | None = None) -> dict[str, Any]:
-    """One calibration round: the same content written 3 ways that differ along one axis."""
-    axes = DIAGNOSTIC_AXES[kind]
-    axis, options = axes[(round_number - 1) % len(axes)]
-    labels = dict(zip("ABC", options))
-    if kind == "reading":
-        content = ("Read the source the user gave. Pick ONE short, meaty section and explain that same section "
-                   "three times.")
-    else:
-        content = ("Use the user's notes on any topic (if there are none, ask for 2–3 lines of rough notes). "
-                   "Write the same short paragraph three times, using only those notes.")
-    steps = [
-        content,
-        f"Keep the content identical; vary ONLY the {axis}: " + "; ".join(f"{k} = {v}" for k, v in labels.items()) + ".",
-        "Show them labeled A, B, C. Don't say which you prefer. Ask which one works best for the user, and why "
-        "(optional).",
-        f"Call mo_record with kind='variations', task='{kind}', and data={{'diagnostic': true, 'axis': '{axis}', "
-        "'chosen': <letter>, 'passed_over': [<letters>], 'options': <the labels>, 'note': <their why, if any>}.",
-        f"If none fit, record that with chosen=null. Then continue with round {round_number + 1} by calling "
-        f"mo_profile(action='diagnostic', kind='{kind}', round={round_number + 1})"
-        + ("." if round_number < DIAGNOSTIC_ROUNDS else ", or stop here; this is the last suggested round."),
-    ]
-    return {
-        "profile": profile.name,
-        "diagnostic": kind,
-        "round": round_number,
-        "of": DIAGNOSTIC_ROUNDS,
-        "axis": axis,
-        "variations": labels,
-        "source": source,
-        "steps": steps,
-    }
 
 
 def select_rules(rules: list[dict[str, Any]], task: str, register: str) -> list[dict[str, Any]]:
@@ -147,6 +94,11 @@ def writing_kit(
         notes.append(f"Only the first {MAX_KEYWORDS} keywords were approved; more makes it sound like the source.")
         keywords = keywords[:MAX_KEYWORDS]
 
+    if not seed:
+        notes.append(
+            "No seed was passed. If the user wrote ANY of their own words for this piece (notes, bullets, a rough "
+            "line), call mo_write again with those words verbatim as `seed` before drafting."
+        )
     if seed:
         seed_source = "user"
     elif exemplars:

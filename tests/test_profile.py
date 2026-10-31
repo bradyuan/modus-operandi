@@ -5,22 +5,22 @@ import pytest
 from mcp.server.mcpserver.exceptions import ToolError
 
 from mo.server import server
-from mo.store import Profile, active_profile, mo_home
+from mo.store import Profile, active_profile
 
 
-def call(args):
-    return anyio.run(server.call_tool, "mo_profile", args)
+def call(tool, args):
+    return anyio.run(server.call_tool, tool, args)
 
 
-def ok(args):
-    result = call(args)
+def ok(args, tool="mo_profile"):
+    result = call(tool, args)
     assert not result.is_error, result.content
     return result.structured_content
 
 
-def fails(args):
+def fails(args, tool="mo_profile"):
     with pytest.raises(ToolError) as exc:
-        call(args)
+        call(tool, args)
     # The message must reach the host, not just "Error executing tool".
     assert ":" in str(exc.value)
     return str(exc.value)
@@ -42,28 +42,39 @@ def test_create_rejects_duplicates_and_use_rejects_unknown(mo_home):
     fails({"action": "use", "name": "missing"})
 
 
-def test_add_sample_needs_confirmation(mo_home):
+def test_add_sample_saves_immediately(mo_home):
     ok({"action": "create", "name": "job-apps"})
-    pending = ok({"action": "add_sample", "register": "cover_letter", "text": "I broke prod once. I fixed it."})
-    assert pending["status"] == "needs_confirmation"
-    assert "your own writing" in pending["ask_user"]
-    # Nothing is saved until the user confirms.
-    assert Profile("job-apps").exemplars("cover_letter") == []
-
-    saved = ok({"action": "confirm", "code": pending["code"]})
-    samples = Profile("job-apps").exemplars("cover_letter")
+    saved = ok({"action": "add_sample", "register": "essay", "text": "I broke prod once. I fixed it."})
+    samples = Profile("job-apps").exemplars("essay")
     assert [e.name for e in samples] == [saved["saved"]]
     assert samples[0].source == "user-provided"
     assert samples[0].text == "I broke prod once. I fixed it."
 
-    # A code works once.
-    fails({"action": "confirm", "code": pending["code"]})
+
+def test_add_sample_rejects_recent_mo_drafts(mo_home):
+    ok({"action": "create", "name": "p"})
+    draft = ("At my last job I rebuilt the alerting pipeline so that pages reached the right engineer within "
+             "a minute, which cut our overnight incidents in half over one quarter.")
+    ok({"register": "cover_letter", "draft": draft}, tool="mo_check")
+    message = fails({"action": "add_sample", "register": "cover_letter", "text": draft})
+    assert "looks AI-written" in message
+    # Lightly wrapping the draft doesn't get around it either.
+    fails({"action": "add_sample", "register": "cover_letter", "text": "Here's my letter. " + draft})
+    # The user's own, different writing is fine.
+    ok({"action": "add_sample", "register": "cover_letter",
+        "text": "Honestly the reason I want this job is that I like fixing things at 2am more than I should."})
+    assert len(Profile("p").exemplars("cover_letter")) == 1
+
+
+def test_draft_fingerprints_store_no_text(mo_home):
+    ok({"register": "essay", "draft": "Completely unique sentence about pelicans and spreadsheets today."},
+       tool="mo_check")
+    assert "pelicans" not in (mo_home / "recent_drafts.json").read_text()
 
 
 def test_show_and_remove_sample(mo_home):
     ok({"action": "create", "name": "p"})
-    code = ok({"action": "add_sample", "register": "essay", "text": "Short. Plain.", "sample": "My Essay"})["code"]
-    saved = ok({"action": "confirm", "code": code})["saved"]
+    saved = ok({"action": "add_sample", "register": "essay", "text": "Short. Plain.", "sample": "My Essay"})["saved"]
     shown = ok({"action": "show"})
     assert shown["samples"] == {"essay": [{"sample": "my-essay", "words": 2, "source": "user-provided"}]}
     ok({"action": "remove_sample", "register": "essay", "sample": saved})
@@ -71,24 +82,19 @@ def test_show_and_remove_sample(mo_home):
     fails({"action": "remove_sample", "register": "essay", "sample": saved})
 
 
-def test_write_uses_active_profile(mo_home):
+def test_write_uses_active_profile_and_nudges_for_seed(mo_home):
     ok({"action": "create", "name": "journal"})
-    kit = anyio.run(server.call_tool, "mo_write", {"register": "article"}).structured_content
+    kit = ok({"register": "article"}, tool="mo_write")
     assert kit["profile"] == "journal"
+    assert any("verbatim as `seed`" in n for n in kit["notes"])
 
 
-def test_diagnostic_rounds_vary_one_axis(mo_home):
-    first = ok({"action": "diagnostic", "kind": "reading", "source": "https://example.com/paper"})
-    second = ok({"action": "diagnostic", "kind": "reading", "round": 2})
-    assert set(first["variations"]) == {"A", "B", "C"}
-    assert first["axis"] != second["axis"]
-    assert any("mo_record" in step for step in first["steps"])
-
-
-def test_tool_calls_are_logged_without_text(mo_home):
+def test_tool_calls_and_failures_are_logged_without_text(mo_home):
     ok({"action": "create", "name": "p"})
-    anyio.run(server.call_tool, "mo_check", {"register": "essay", "draft": "I'm excited to leverage this."})
+    ok({"register": "essay", "draft": "I'm excited to leverage this."}, tool="mo_check")
+    fails({"action": "use", "name": "missing"})
     lines = [json.loads(l) for l in (mo_home / "logs" / "calls.jsonl").read_text().splitlines()]
-    assert [l["tool"] for l in lines] == ["mo_profile", "mo_check"]
+    assert [l["tool"] for l in lines] == ["mo_profile", "mo_check", "mo_profile"]
     assert lines[1]["status"] == "failed_checks"
+    assert "missing" in lines[2]["error"]
     assert "excited" not in json.dumps(lines)
