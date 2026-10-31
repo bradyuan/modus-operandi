@@ -87,6 +87,10 @@ Individual cases  →  Candidates  →  Rules (canonical cases)
 - **Weights go both ways.** Counter-evidence lowers a weight, and old evidence slowly counts for less (decay), because preferences change.
 - **Mixed evidence → split.** A rule with ~50/50 evidence is usually two rules in different contexts, e.g. "short for email" and "long for essays."
 - **Specificity check.** Rules too vague to act on ("be clear") are rejected.
+- **Checkable vs. fuzzy.** Each rule is tagged:
+  - **Checkable** rules can be tested by code ("no em dashes," "under 250 words," "never 'leverage'"). `mo_check` enforces them with a pattern or count, which is real enforcement.
+  - **Fuzzy** rules ("lead with a scene") are sent in the kit as guidance; you catch misses through picks and edits.
+  - The more preferences become checkable rules, the more MO enforces rather than suggests.
 
 ### 4.2 Matching
 
@@ -94,6 +98,20 @@ Individual cases  →  Candidates  →  Rules (canonical cases)
 - You get a quick check: *"I counted these 4 as 'mechanism first.' Right?"*
 
 ### 4.3 What goes into a kit
+
+**Selection is deterministic, not semantic search.** The lookup key is **(profile, task, register)**:
+
+| Step | How | Who decides |
+|---|---|---|
+| Profile | Named explicitly ("as journal"), else the last-used one, else the default | MO |
+| Task | `read` / `write` / `evolve` | The host, by picking the tool |
+| Register | A `register` input with a fixed list of values (email, essay, cover letter, article…). The widget shows it so you can correct it. | The host proposes, MO validates |
+| Rules | Every rule for that task and register with weight ≥ 0.5, ranked by weight. The profile is compact, so it almost always fits whole. | MO |
+| Exemplars | Filter by register, then the 1–3 **most representative of your style** (closest to your stylometric average) and highest-rated | MO |
+| Influences | Accepted ones for this register only | MO |
+| Modifiers | From the request | The host |
+
+**No vector search or RAG.** It isn't needed, since the profile fits whole, and topic-similar exemplars could even hurt: the host might borrow their content and phrasing. Every choice is explainable: *"you got these 2 exemplars because they're your highest-rated essays and the closest to your average style."*
 
 **Kits only ever contain rules and exemplars, never raw cases.** Weights are turned into instruction strength:
 
@@ -123,6 +141,7 @@ rules:
     hits: 12
     misses: 1
     weight: 0.87        # derived, never set by hand
+    check: null         # fuzzy; a checkable rule has e.g. {type: banned_phrase, value: "leverage"}
     cases: [c014, c022, c031]
 candidates:
   - id: K7
@@ -171,7 +190,8 @@ The piece is built **from your voice outward**, not from the facts with your voi
  ② Host writes from the seed outward, looking facts up in the fact sheet
  ③ Host calls mo_check(draft) → MO returns flags
       (copied phrases, AI tells, seed retention, voice distance, unsupported facts, coverage)
- ④ Host fixes the flagged parts (up to 2 tries; then shows the draft with flags)
+ ④ Host fixes the flagged parts (up to 2 tries), then shows the draft via mo_present,
+      which re-checks it and displays it with its check status (§11.6)
  ⑤ Widget: @MO evolve → 3 variations · edit inline → mo_record → cases → funnel
 ```
 
@@ -262,6 +282,7 @@ One MO MCP server
  ├─ mo_write(seed?, facts, reqs, mods)→ writing kit: voice rules + exemplars + steps
  ├─ mo_evolve(target, example?)       → variation plan: the 3 differences to try
  ├─ mo_check(draft, context)          → flags (plain code, no LLM)
+ ├─ mo_present(draft, context)        → runs the checks, then shows the draft in the widget with its status
  ├─ mo_record(pick / edit)            → logs a case
  ├─ mo_calibrate()                    → yes/no rule suggestions; stores approved changes
  └─ widget UI                         → buttons, selecting parts, editing inline
@@ -370,15 +391,40 @@ MO controls **its own tools**, not ordinary host replies. No host lets a third-p
 | Lever | Strength | What it does |
 |---|---|---|
 | **Widget buttons** | ✅ Enforced | Call MO's tools directly, with no host model in the loop |
+| **`mo_present`** | ✅ Enforced for MO's UI | The only way into the widget, and it runs the checks itself. Text the host pastes into chat instead is visibly not MO's output. |
 | **Steps in each kit** | Usually followed | "Write from the seed. Treat the JD as a checklist. Call `mo_check` before showing. Make exactly these 3 variations. Call `mo_evolve` for further changes." This is also the text-only fallback. |
 | **Tool descriptions** | Discovery only | Tell the host when to call MO |
 
 Not enforceable: free-typed revisions without `@MO` ("make it punchier"). Kit steps reduce these, but they can't be eliminated.
 
+**Observability:** OpenTelemetry traces every tool call, recording whether the host called `mo_check`, whether flags got fixed, how routing went, and latency. Adherence for each host is a tracked metric, not a guess.
+
+### 11.6 When output is wrong
+
+**MO guarantees visibility, not correctness.** MO doesn't control the host's generation loop, so it can *request* retries but not force them. What it can guarantee: nothing appears in MO's UI unchecked, and failures are flagged, never hidden.
+
+| Kind of wrong | Detected by | Response |
+|---|---|---|
+| Breaks a checkable rule (AI tells, copied phrases, over the word limit) | `mo_check` | Targeted retry with the specific flag as feedback |
+| Invented facts (a number or name not in the fact sheet) | `mo_check` | Targeted retry, then flag it, never hide it |
+| Misquoted source (reading) | `mo_check` verifies quotes word for word against the source text passed in the request | Drop or fix the quote, and mark the claim "unverified" |
+| Host skipped the checks | `mo_present` checks anyway; telemetry | The draft shows ⚠️ with its flags |
+| Wrong register or profile | Shown in the widget | One tap to correct it, and it's logged |
+| Fuzzy wrong (doesn't sound like you, unclear) | **Only you** | `evolve` or an edit |
+
+**Retry rules:**
+1. **Targeted, not regenerated.** Rewrite only the flagged part, and say exactly why.
+2. **Bounded: 2 tries.** Then show the draft with its flags visible. No silent loops.
+3. **Keep the best version.** Return the attempt with the fewest flags, never a worse one.
+4. **Failures read like failures.** Structured results (`"status": "failed_checks", "fix": [...]`) are followed far more reliably than polite suggestions.
+5. **User-triggered retry.** A **"Fix flags"** button in the widget sends a specific request into the conversation. Verify that the Apps SDK lets a widget send follow-up messages.
+6. **System failures aren't preferences.** Failed checks are logged as system events, not as picks or edits, so they don't distort your rules.
+7. **Repeated failures are a signal.** A check that keeps failing means the host can't follow the rule or the rule is too strict. Calibration can ask: *"This rule fails 40% of the time. Loosen it?"*
+
 ## 12. Known traps
 
 - **The host writes in a long context.** MO has no quarantine; drift is countered by re-anchoring (§4.3) and caught by `mo_check`. The drift test (§10) must confirm this is enough.
-- **The host may ignore kit steps.** It might skip `mo_check` or write its own variations. Buttons and clear steps reduce this; test it early.
+- **The host may ignore kit steps.** It might skip `mo_check`, skip retries, or write its own variations. `mo_present` keeps checks unavoidable for anything in MO's UI, and telemetry measures the rest; test it early.
 - **Simplifying can distort (reading).** Ground explanations in the source with quotes or links, and note what was left out.
 - **Invented facts (writing).** `mo_check` flags numbers and names not in the fact sheet.
 - **Wrong matches.** A case assigned to the wrong rule strengthens that rule without anyone noticing. Spot checks in calibration catch this.
@@ -389,13 +435,13 @@ Not enforceable: free-typed revisions without `@MO` ("make it punchier"). Kit st
 
 ## 13. Open questions
 
-- [ ] Implementation language for the MCP server, and hosting provider
+- [ ] Hosting provider (Fly.io or Render)
 - [ ] Exact fixed schemas: the reading gathering schema and the writing kit
 - [ ] Confirm defaults: approval friction (§3), promotion at ~5 cases (§4), 3 variations with an optional why (§2), outline step for long pieces, ≤5 keywords, 2 fix tries (§7), cap on influence weight (§8)
 - [ ] Decay rate for old evidence
 - [ ] Case retention window (§11.1)
 
-**Decided:** writing ships first (see `AGENTS.md`). Hosted product, local development (decision 006).
+**Decided:** writing ships first (see `AGENTS.md`). Hosted product, local development (decision 006). Stack and visibility guarantee (decision 007).
 
 ---
 

@@ -23,6 +23,8 @@ Goal: cut ~2h of reading/synthesis and ~2h of writing down to minutes each.
 
 1. **MO is a harness, not a generator.** MO maintains and persists state (profile, cases, rules), supplies it to the host AI with workflow instructions, and verifies output with deterministic code checks. MO makes no LLM calls; the host AI does all reading and writing.
 2. **Tools.** Users see `@MO read`, `@MO write`, `@MO evolve`. Each returns a kit: the relevant rules + exemplars + workflow steps. Helper tools the host calls on its own: `mo_check` (deterministic lint + voice checks), `mo_record` (logs picks/edits), `mo_calibrate` (yes/no rule suggestions). Widget buttons call tools directly.
+   - Drafts are shown through `mo_present`, which runs the checks itself.
+   - **MO guarantees visibility, not correctness:** nothing appears in MO's UI unchecked; failures are flagged, never hidden. Retries are requested, not guaranteed.
 3. **Feedback loop.** `@MO evolve` → the host produces 3 variations as MO specifies, each differing in one way → the user picks → MO records a case. If the user rejects all of them, more variations; rejected ones are logged too.
 4. **Two modes.** **Use:** the profile is read-only; picks affect the current piece only. **Calibrate:** occasional yes/no questions turn repeated patterns into rule changes. Nothing changes without the user's approval.
 5. **Weighting funnel:** individual cases → candidates → rules, weighted 0–1 from hits/misses (both directions). Always compact: reinforce existing rules before creating new ones. Only rules reach the context; raw cases are archived as the source of truth.
@@ -38,10 +40,11 @@ Goal: cut ~2h of reading/synthesis and ~2h of writing down to minutes each.
 
 ## Tentative (not yet decided)
 
-- Implementation language and hosting provider
+- Hosting provider (Fly.io or Render)
 - Exact fixed schemas for reading dumps and writing kits
 
 **Decided:** writing ships first (tests: job applications, essays, a journal article).
+Stack: Python + FastAPI + MCP SDK, Postgres, React widget, Docker, GitHub Actions CI/CD (tests + golden-set evals), OpenTelemetry. No vector database: the profile is compact enough to send whole.
 
 ## Where things live
 
