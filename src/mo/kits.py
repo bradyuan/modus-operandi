@@ -6,12 +6,26 @@ from typing import Any
 
 from mo import style
 from mo.store import Exemplar, Profile, validate_register
-from mo.weights import rule_weight, strength
 
+ALWAYS, PREFER = 0.8, 0.5
 RULE_TOKEN_BUDGET = 1500
 MAX_EXEMPLARS = 3
 MAX_KEYWORDS = 5
 SEED_OFFER = "Want it more like you? Give me one sentence on your take."
+
+
+def weight(hits: int, misses: int) -> float:
+    """Rule weight from evidence (Beta(1,1) posterior mean): 1/1 -> 0.67, 12/13 -> 0.87."""
+    return (hits + 1) / (hits + misses + 2)
+
+
+def rule_weight(rule: dict[str, Any]) -> float:
+    return weight(int(rule.get("hits", 0)), int(rule.get("misses", 0)))
+
+
+def strength(w: float) -> str | None:
+    """How strongly a rule is sent to the host: 'always', 'prefer', or not at all."""
+    return "always" if w >= ALWAYS else "prefer" if w >= PREFER else None
 
 WRITING_STEPS = [
     "Treat SEED as the start of the author's own document and continue it in the same voice. "

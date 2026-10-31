@@ -62,6 +62,8 @@ uv sync                      # install dependencies
 uv run pytest                # run tests
 uv run mo-server             # run over stdio
 uv run mo-server --transport http --port 8000   # run over HTTP at http://127.0.0.1:8000/mcp
+uv run mo-actions --port 8000                    # or: plain HTTPS API for a Custom GPT (docs/GPT.md)
+uv run python evals/calibrate_voice.py <corpus-dir>  # calibrate voice checks on real authors
 
 # Try the tools in a browser UI
 npx @modelcontextprotocol/inspector uv run mo-server
@@ -87,4 +89,6 @@ Data lives in `~/.mo/` (override with `MO_HOME`): profiles in `profiles/<name>/`
 ## Docs
 
 - [Design](docs/DESIGN.md): product design and open questions
+- [Read](docs/READ.md): how reading explanations are learned
+- [GPT](docs/GPT.md): running MO as a Custom GPT (temporary; Custom GPTs are being retired)
 - [Decisions](docs/decisions/): why the direction changed

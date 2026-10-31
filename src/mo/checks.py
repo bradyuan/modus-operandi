@@ -11,7 +11,7 @@ from typing import Any
 
 from mo import style
 from mo.store import Exemplar
-from mo.weights import rule_weight, strength
+from mo.kits import rule_weight, strength
 
 AI_TELLS = (
     "leverage", "leveraging", "delve", "delving", "tapestry", "testament to", "in today's fast-paced",
@@ -23,6 +23,18 @@ AI_TELLS = (
 COPY_NGRAM = 4
 
 _NUMBER_RE = re.compile(r"(?<![\w.])\d[\d,]*(?:\.\d+)?%?")
+# "1." / "### 3." / "Q4)" at the start of a line is numbering, not a claim.
+_LIST_MARKER_RE = re.compile(r"^[ \t]*(?:#{1,6}[ \t]*)?(?:Q)?\d+[.)][ \t]", re.MULTILINE | re.IGNORECASE)
+_HEADING_RE = re.compile(r"^[ \t]*#{1,6}.*$", re.MULTILINE)
+
+# Hedges are checked one by one: "I believe" in the samples doesn't license "I think".
+HEDGES = ("I think", "I believe", "I feel", "in my opinion", "arguably", "it seems", "I guess")
+# Contrast closers, checked against the author's own rate per 1,000 words.
+CONTRAST = re.compile(r"\bless about\b[^.]*?\bmore about\b|\bnot (?:just|merely|simply|only)\b[^.]*?\bbut\b"
+                      r"|\brather than\b", re.IGNORECASE)
+# Calibrated on public-domain authors (evals/calibrate_voice.py): these habit checks wrongly flag
+# under 1% of an author's own passages. Sentence length and overall voice distance vary too much
+# within one author on short drafts, so they are reported as metrics, never flagged.
 
 
 def _phrase_re(phrase: str) -> re.Pattern[str]:
@@ -86,7 +98,13 @@ def check_copied_phrases(
     return flags
 
 
+def prose(text: str) -> str:
+    """Text without headings and list numbering, for claims and style measurements."""
+    return _LIST_MARKER_RE.sub("", _HEADING_RE.sub("", text))
+
+
 def check_unsupported_numbers(draft: str, supported_text: str) -> list[dict[str, Any]]:
+    draft = prose(draft)
     supported = _numbers(supported_text)
     return [
         {
@@ -118,6 +136,35 @@ def check_rules(draft: str, rules: list[dict[str, Any]]) -> list[dict[str, Any]]
             if count > int(value):
                 flags.append({"type": "rule", "severity": "fix", "detail": rule["rule"],
                               "fix": f"Use '{check['pattern']}' at most {value} times (now {count})."})
+    return flags
+
+
+def _avg_sentence_length(text: str) -> float:
+    lengths = [len(style.words(s)) for s in style.sentences(text)]
+    lengths = [n for n in lengths if n]
+    return sum(lengths) / len(lengths) if lengths else 0.0
+
+
+def check_voice_habits(draft: str, exemplars: list[Exemplar]) -> list[dict[str, Any]]:
+    """Compare the draft with the author's own samples, not with a generic standard."""
+    if not exemplars:
+        return []
+    body, own = prose(draft), "\n".join(e.text for e in exemplars)
+    flags = []
+
+    for hedge in HEDGES:
+        count = len(_phrase_re(hedge).findall(body))
+        if count >= 2 and not _phrase_re(hedge).search(own):
+            flags.append({"type": "voice", "severity": "fix", "detail": f"hedge:{hedge}",
+                          "fix": f"Cut '{hedge}' (used {count} times): the author never writes it. Say it directly."})
+
+    count = len(CONTRAST.findall(body))
+    rate = count / max(len(style.words(body)), 1) * 1000
+    own_rate = len(CONTRAST.findall(own)) / max(len(style.words(own)), 1) * 1000
+    if count >= 2 and rate > 2 * own_rate + 1:
+        flags.append({"type": "voice", "severity": "fix", "detail": "contrast",
+                      "fix": f"Cut 'not X but Y' / 'rather than' contrasts: used {count} times, far more than the "
+                             f"author does ({own_rate:.1f} per 1,000 words in their samples)."})
     return flags
 
 
@@ -157,19 +204,24 @@ def run_checks(
     exemplars: list[Exemplar] | None = None,
 ) -> dict[str, Any]:
     keywords = keywords or []
+    exemplars = exemplars or []
     own_text = "\n".join(filter(None, [seed, facts]))
 
-    flags = check_ai_tells(draft)
+    body = prose(draft)
+    flags = check_ai_tells(body)
     if source_text:
-        flags += check_copied_phrases(draft, source_text, keywords, own_text)
-    flags += check_unsupported_numbers(draft, own_text)
+        flags += check_copied_phrases(body, source_text, keywords, own_text)
+    # Numbers in the author's own samples are their facts too.
+    flags += check_unsupported_numbers(draft, "\n".join([own_text, *(e.text for e in exemplars)]))
+    flags += check_voice_habits(draft, exemplars)
     flags += check_rules(draft, rules or [])
     flags += check_keywords(draft, keywords)
 
     metrics: dict[str, Any] = {
         "word_count": len(style.words(draft)),
         "ai_tell_count": sum(f["type"] == "ai_tell" for f in flags),
-        "voice_distance": voice_distance(draft, exemplars or []),
+        "voice_distance": voice_distance(prose(draft), exemplars),
+        "avg_sentence_length": round(_avg_sentence_length(prose(draft)), 1),
     }
     if seed:
         metrics["seed_retention"] = seed_retention(seed, draft)

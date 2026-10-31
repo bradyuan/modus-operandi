@@ -262,9 +262,14 @@ Your voice isn't frozen. It **evolves, but only through suggestions you accept.*
 | AI-tell count | "leverage," "delve," reflexive lists of three… |
 | Copied-phrase overlap | n-grams shared with the job description or influence texts (approved keywords excluded) |
 | **Seed retention** | % of your seed's wording that survived |
-| Stylometric distance | function words and sentence-length/punctuation patterns vs. your samples for this register |
+| Stylometric distance | function words and sentence-length/punctuation patterns vs. your samples for this register. **Reported, never flagged** (see below) |
 | Unsupported facts | numbers and names in the output that don't appear in the fact sheet |
 | Coverage | job requirements and keywords addressed |
+
+**Calibration on real authors (2026-10-31, `evals/calibrate_voice.py`, 16 public-domain books):**
+- Overall voice distance separates authors only weakly on 200-word drafts: AUC 0.65 (0.5 is chance). Burrows' Delta and character n-grams did no better with a general word list. So it's a reported metric, never a flag.
+- Sentence length varies too much within one author to flag; it's reported only.
+- Habit checks compared with the author's own samples (hedges they never use, repeated "not X but Y" contrasts) wrongly flagged under 1% of authors' own passages, and caught both habits in a real ChatGPT run. These are the voice flags MO uses.
 
 **3. LLM judge: later and optional, not in v0.1.** If you add one: pairwise comparisons, a different model from the writer, randomized order, and only trusted if it agrees with your picks about 80% of the time or more.
 
@@ -447,4 +452,4 @@ Not enforceable: free-typed revisions without `@MO` ("make it punchier"). Kit st
 
 ---
 
-*The earlier coding-enforcement design is preserved in [ARCHITECTURE.md](ARCHITECTURE.md).*
+*Reading is designed in detail in [READ.md](READ.md). Running as a Custom GPT: [GPT.md](GPT.md). The earlier coding-enforcement design is preserved in [ARCHITECTURE.md](ARCHITECTURE.md).*

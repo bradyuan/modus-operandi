@@ -1,7 +1,7 @@
 from conftest import write_exemplar, write_rules
 
 from mo import kits
-from mo.weights import strength, weight
+from mo.kits import strength, weight
 
 
 def test_weight_accounts_for_evidence():
