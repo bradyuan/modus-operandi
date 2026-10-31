@@ -17,12 +17,14 @@ Goal: cut ~2h of reading/synthesis and ~2h of writing down to minutes each.
 
 - **In scope:** reading and writing. Nothing else.
 - **Out of scope:** coding enforcement (architecture rules, Claude Code hooks). It's parked. `docs/ARCHITECTURE.md` is a record, not a plan. Don't propose reviving it unless the user asks.
-- **Phase:** design. No code yet.
+- **Phase:** building v0.1 (writing first). Local MCP server with `mo_write`, `mo_check`, `mo_record`.
 
 ## Core design
 
 1. **MO is a harness, not a generator.** MO maintains and persists state (profile, cases, rules), supplies it to the host AI with workflow instructions, and verifies output with deterministic code checks. MO makes no LLM calls; the host AI does all reading and writing.
-2. **Tools.** Users see `@MO read`, `@MO write`, `@MO evolve`. Each returns a kit: the relevant rules + exemplars + workflow steps. Helper tools the host calls on its own: `mo_check` (deterministic lint + voice checks), `mo_record` (logs picks/edits), `mo_calibrate` (yes/no rule suggestions). Widget buttons call tools directly.
+2. **Tools.** Users see `@MO read`, `@MO write`, `@MO evolve`, and `@MO profile`. The first three return a kit: the relevant rules + exemplars + workflow steps. Helper tools the host calls on its own: `mo_check` (deterministic lint + voice checks), `mo_record` (logs picks/edits), `mo_calibrate` (yes/no rule suggestions). Widget buttons call tools directly.
+   - `@MO profile` lists, creates, and switches profiles, and seeds them from inside the host: writing samples (explicit two-step confirmation; labeled user-provided; removable) and diagnostics (3 variations of the same content; picks become candidate rules).
+   - Each user's profiles are tied to their host account through one-time account linking (OAuth). In development, a secret link stands in for sign-in.
    - Drafts are shown through `mo_present`, which runs the checks itself.
    - **MO guarantees visibility, not correctness:** nothing appears in MO's UI unchecked; failures are flagged, never hidden. Retries are requested, not guaranteed.
 3. **Feedback loop.** `@MO evolve` → the host produces 3 variations as MO specifies, each differing in one way → the user picks → MO records a case. If the user rejects all of them, more variations; rejected ones are logged too.

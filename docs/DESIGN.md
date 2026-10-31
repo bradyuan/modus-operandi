@@ -285,6 +285,8 @@ One MO MCP server
  ├─ mo_present(draft, context)        → runs the checks, then shows the draft in the widget with its status
  ├─ mo_record(pick / edit)            → logs a case
  ├─ mo_calibrate()                    → yes/no rule suggestions; stores approved changes
+ ├─ mo_profile(action, ...)           → list/create/use/show profiles; add_sample → confirm (two-step);
+ │                                      remove_sample; diagnostic (writing/reading calibration rounds)
  └─ widget UI                         → buttons, selecting parts, editing inline
 ```
 

@@ -53,6 +53,37 @@ MO is planned as an [MCP](https://modelcontextprotocol.io) app, so one profile w
 
 MO is a **harness**, not another AI. It keeps your profile, hands it to the AI you're already using, and checks the result. Your data is kept to a minimum, encrypted, and yours to export or delete.
 
+## Development
+
+Requires [uv](https://docs.astral.sh/uv/) and Node.js (for the MCP Inspector).
+
+```bash
+uv sync                      # install dependencies
+uv run pytest                # run tests
+uv run mo-server             # run over stdio
+uv run mo-server --transport http --port 8000   # run over HTTP at http://127.0.0.1:8000/mcp
+
+# Try the tools in a browser UI
+npx @modelcontextprotocol/inspector uv run mo-server
+```
+
+### Connect to ChatGPT (developer mode)
+
+```bash
+cloudflared tunnel --url http://127.0.0.1:8000
+# prints https://<random-name>.trycloudflare.com; in a second terminal:
+uv run mo-server --transport http --port 8000 --public-host <random-name>.trycloudflare.com
+# prints the full link with a secret path; keep it private
+```
+
+In ChatGPT: **Settings → Apps & Connectors → Advanced → Developer mode**, then create a connector with that link and no authentication. The tunnel name changes on every restart, so update the link each session.
+
+### Profiles
+
+Manage profiles from inside ChatGPT with `@MO profile`: list, create, and switch profiles, save your own writing samples (MO asks you to confirm each one), and run writing or reading diagnostics.
+
+Data lives in `~/.mo/` (override with `MO_HOME`): profiles in `profiles/<name>/`, a tool-call log in `logs/calls.jsonl`. Samples are plain files in `profiles/<name>/exemplars/<register>/`, where register is one of `email`, `essay`, `cover_letter`, `article`, `notes`, or `other`. Never commit them.
+
 ## Docs
 
 - [Design](docs/DESIGN.md): product design and open questions
