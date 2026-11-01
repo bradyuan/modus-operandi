@@ -3,7 +3,7 @@
 **Long-Term Memory for AI.** Everything you read makes sense to you. Everything you write sounds like you.
 
 > **Status:** building [v1](docs/v1/DESIGN.md). `make setup` and `make run` work; in ChatGPT only
-> `@MO spike` exists so far (the verification step). The old prototype is under the `v0-prototype` git tag.
+> `@MO profiles` exists so far (step 1 of the build). The old prototype is under the `v0-prototype` git tag.
 
 ## Setup
 

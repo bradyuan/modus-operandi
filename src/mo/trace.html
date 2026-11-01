@@ -5,17 +5,26 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MO trace</title>
 <style>
-  :root { --bg: #f7f6f3; --card: #fff; --ink: #1d1d1b; --muted: #6b6a66; --line: #e3e1dc;
+  :root { --bg: #f7f6f3; --card: #fff; --ink: #1d1d1b; --muted: #6b6a66; --line: #e3e1dc; --accent: #1d1d1b;
           --human: #1d4ed8; --chatgpt: #7c3aed; --mo: #4b5563; --dev: #b45309; --bad: #b42318; color-scheme: light; }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #161614; --card: #1f1f1d; --ink: #ecebe7; --muted: #9b9a95; --line: #33322f;
+    :root { --bg: #161614; --card: #1f1f1d; --ink: #ecebe7; --muted: #9b9a95; --line: #33322f; --accent: #ecebe7;
             --human: #8fa5ff; --chatgpt: #c4a5ff; --mo: #a3a3a3; --dev: #f0b46b; --bad: #f08a80; color-scheme: dark; }
   }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 system-ui, -apple-system, sans-serif; }
-  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 64px; }
+  main { max-width: 1040px; margin: 0 auto; padding: 24px 16px 64px; }
   h1 { font-size: 20px; margin: 0 0 4px; }
   .muted { color: var(--muted); }
-  .wrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 10px; margin-top: 16px; }
+  nav { display: flex; flex-wrap: wrap; gap: 4px; margin: 16px 0 0; border-bottom: 1px solid var(--line); }
+  nav button { font: inherit; background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted);
+               padding: 8px 12px; cursor: pointer; margin-bottom: -1px; }
+  nav button.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+  .filters { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 12px 0; }
+  .chip { font: inherit; font-size: 12px; border: 1px solid var(--line); background: var(--card); color: var(--muted);
+          border-radius: 99px; padding: 3px 10px; cursor: pointer; }
+  .chip.on { color: var(--ink); border-color: var(--ink); }
+  .summary { font-weight: 600; margin: 4px 0 0; }
+  .wrap { overflow-x: auto; background: var(--card); border: 1px solid var(--line); border-radius: 10px; margin-top: 12px; }
   table { border-collapse: collapse; width: 100%; }
   th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
   th { font-size: 12px; color: var(--muted); font-weight: 600; }
@@ -29,23 +38,82 @@
 <main>
   <h1>MO trace</h1>
   <div class="muted">Every event MO recorded, newest first, refreshing live. HUMAN USER events can only come
-    from a click in an MO box signed with that box's key. JSON: <code>/trace/events?actor=…&amp;box=…</code></div>
+    from an MO box signed with that box's key. Deleting a profile removes its events; one line records the delete.</div>
+  <nav id="tabs"></nav>
+  <div class="filters" id="filters"></div>
+  <div class="summary" id="summary"></div>
   <div class="wrap"><table>
     <thead><tr><th>time</th><th>actor</th><th>event</th><th>details</th></tr></thead>
-    <tbody id="rows"><tr><td colspan="4" class="muted">No events yet.</td></tr></tbody>
+    <tbody id="rows"></tbody>
   </table></div>
+  <p class="muted">JSON: <code>/trace/events?profile=&lt;name|none&gt;&amp;actor=…&amp;box=…</code> ·
+    <code>/trace/profiles</code></p>
 </main>
 <script>
+const ACTORS = ["HUMAN USER", "CHATGPT", "MO", "DEV"];
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
-async function load() {
-  const events = (await (await fetch("/trace/events")).json()).reverse();
-  if (!events.length) return;
-  document.getElementById("rows").innerHTML = events.map(e => {
+const params = new URLSearchParams(location.search);
+const state = {
+  tab: params.get("profile") || "all",                 // "all" | "none" | a profile name
+  actors: new Set(params.get("actor") ? params.get("actor").split(",") : ACTORS),
+  refusalsOnly: params.get("refusals") === "1",
+};
+let all = [], profiles = [];
+
+function saveUrl() {
+  const p = new URLSearchParams();
+  if (state.tab !== "all") p.set("profile", state.tab);
+  if (state.actors.size !== ACTORS.length) p.set("actor", [...state.actors].join(","));
+  if (state.refusalsOnly) p.set("refusals", "1");
+  history.replaceState(null, "", p.toString() ? `?${p}` : location.pathname);
+}
+
+function inTab(e) {
+  if (state.tab === "all") return true;
+  if (state.tab === "none") return !e.profile;
+  return e.profile === state.tab;
+}
+
+function render() {
+  const names = profiles.map(p => p.name);
+  if (!["all", "none", ...names].includes(state.tab)) state.tab = "all";  // e.g. the profile was deleted
+  const tabs = [["all", "All"], ...names.map(n => [n, n]), ["none", "No profile"]];
+  document.getElementById("tabs").innerHTML = tabs.map(([id, text]) =>
+    `<button data-tab="${esc(id)}" class="${state.tab === id ? "on" : ""}">${esc(text)}</button>`).join("");
+  document.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { state.tab = b.dataset.tab; update(); });
+
+  document.getElementById("filters").innerHTML = `<span class="muted">Show:</span>` +
+    ACTORS.map(a => `<button class="chip ${state.actors.has(a) ? "on" : ""}" data-actor="${a}">${a}</button>`).join("") +
+    `<button class="chip ${state.refusalsOnly ? "on" : ""}" data-refusals>refusals only</button>`;
+  document.querySelectorAll("[data-actor]").forEach(b => b.onclick = () => {
+    state.actors.has(b.dataset.actor) ? state.actors.delete(b.dataset.actor) : state.actors.add(b.dataset.actor); update();
+  });
+  document.querySelector("[data-refusals]").onclick = () => { state.refusalsOnly = !state.refusalsOnly; update(); };
+
+  const tabEvents = all.filter(inTab);
+  const refusals = tabEvents.filter(e => e.type === "refused").length;
+  const p = profiles.find(x => x.name === state.tab);
+  document.getElementById("summary").textContent = p
+    ? `${p.name} · ${p.seeds} seeds · ${p.tunes} tunes · ${tabEvents.length} events · ${refusals} refusals`
+    : `${state.tab === "all" ? `All · ${profiles.length} profiles` : "No profile"} · ${tabEvents.length} events · ${refusals} refusals`;
+
+  const shown = tabEvents.filter(e => state.actors.has(e.actor) && (!state.refusalsOnly || e.type === "refused")).reverse();
+  document.getElementById("rows").innerHTML = shown.length ? shown.map(e => {
     const {at, actor, type, ...rest} = e;
     return `<tr class="${type === "refused" ? "refused" : ""}"><td>${new Date(at * 1000).toLocaleTimeString()}</td>
       <td class="actor ${actor.split(" ")[0]}">${esc(actor)}</td><td>${esc(type)}</td>
       <td><code>${esc(JSON.stringify(rest))}</code></td></tr>`;
-  }).join("");
+  }).join("") : `<tr><td colspan="4" class="muted">No events here yet.</td></tr>`;
+}
+
+function update() { saveUrl(); render(); }
+
+async function load() {
+  const json = url => fetch(url).then(r => r.ok ? r.json() : null).catch(() => null);
+  const [ev, pr] = await Promise.all([json("/trace/events"), json("/trace/profiles")]);
+  all = ev || all;
+  profiles = pr || profiles;
+  render();
 }
 load();
 setInterval(load, 2000);

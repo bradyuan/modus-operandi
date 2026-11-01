@@ -40,6 +40,10 @@ def open_box(kind: str, **data: Any) -> tuple[dict[str, Any], str]:
     return box, key
 
 
+def save(box: dict[str, Any]) -> None:
+    _path(box["id"]).write_text(json.dumps(box))
+
+
 def load(box_id: str) -> dict[str, Any] | None:
     try:
         path = _path(box_id)

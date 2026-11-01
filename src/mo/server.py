@@ -1,8 +1,8 @@
 """MO's MCP server for ChatGPT, plus the MO box's direct line and the local trace (DESIGN §8–9).
 
-Verification spike (DESIGN §10): `mo_spike` shows a test MO box. The box receives a per-box key
-in the tool result's hidden `_meta` and sends the HUMAN USER's clicks straight to MO, signed with
-it. ChatGPT gets no tool that records clicks.
+ChatGPT's tools only ever request an MO box (or, later, hand over generated content). Each box
+receives a per-box key in the tool result's hidden `_meta` and sends the HUMAN USER's input
+straight to MO, signed with it (`mo.direct`). ChatGPT has no tool that records input.
 """
 
 from __future__ import annotations
@@ -20,8 +20,8 @@ from mcp.types import CallToolResult, TextContent
 from starlette.requests import Request
 from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from mo import boxes, events
-from mo.events import CHATGPT, HUMAN_USER, MO
+from mo import boxes, direct, events, profiles
+from mo.events import CHATGPT, MO
 
 BOX_MIME = "text/html;profile=mcp-app"
 LOCAL_HOSTS = ("127.0.0.1", "localhost", "[::1]")
@@ -49,19 +49,24 @@ def create_server(public_url: str) -> MCPServer:
     def mo_box() -> str:
         return (HERE / "box.html").read_text()
 
-    @server.tool(title="MO verification spike",
-                 meta={"ui": {"resourceUri": uri}, "openai/outputTemplate": uri})
-    def mo_spike() -> CallToolResult:
-        """Use only when the user says '@MO spike'. Shows a test MO box with three choices; the user
-        answers by clicking in the box, not in the chat."""
-        box, key = boxes.open_box("spike")
-        events.record(CHATGPT, "tool_call", tool="mo_spike", box=box["id"])
+    def show_box(tool: str, kind: str, label: str, text: str) -> CallToolResult:
+        box, key = boxes.open_box(kind)
+        events.record(CHATGPT, "tool_call", tool=tool, box=box["id"])
         return CallToolResult(
-            content=[TextContent(type="text", text=f"Showing MO test box {box['id']}. "
-                                                   "Ask the user to click a choice in the box.")],
-            structured_content={"box": box["id"], "label": "MO spike · verification", "choices": ["A", "B", "C"]},
+            content=[TextContent(type="text", text=text)],
+            structured_content={"box": box["id"], "view": kind, "label": label},
             meta={"mo/key": key, "mo/endpoint": public_url},
         )
+
+    box_meta = {"ui": {"resourceUri": uri}, "openai/outputTemplate": uri}
+
+    @server.tool(title="MO profiles", meta=box_meta)
+    def mo_profiles() -> CallToolResult:
+        """Use when the user says '@MO profiles' or wants to see, create, or delete MO profiles. Shows
+        the MO profiles box; the user does everything by clicking and typing in the box. You never
+        create, delete, or choose profiles yourself."""
+        return show_box("mo_profiles", "profiles", "MO · Profiles",
+                        "Showing the MO profiles box. The user manages profiles in the box.")
 
     @server.custom_route("/box/{box_id}/event", methods=["POST", "OPTIONS"], include_in_schema=False)
     async def box_event(request: Request) -> Response:
@@ -76,9 +81,8 @@ def create_server(public_url: str) -> MCPServer:
         if box is None:
             events.record(MO, "refused", reason="bad box key", box=box_id, action=body.get("action"))
             return JSONResponse({"error": "not signed by this box"}, status_code=403, headers=CORS)
-        choice = body.get("choice")
-        events.record(HUMAN_USER, "pick", box=box_id, choice=choice)
-        return JSONResponse({"recorded": True, "choice": choice}, headers=CORS)
+        status, reply = direct.handle(box, body)
+        return JSONResponse(reply, status_code=status, headers=CORS)
 
     @server.custom_route("/trace", methods=["GET"], include_in_schema=False)
     async def trace_page(request: Request) -> Response:
@@ -91,7 +95,17 @@ def create_server(public_url: str) -> MCPServer:
         if not _local(request):
             return Response(status_code=404)
         q = request.query_params
-        return JSONResponse(events.read(actor=q.get("actor"), type=q.get("type"), box=q.get("box")))
+        found = events.read(actor=q.get("actor"), type=q.get("type"), box=q.get("box"))
+        if (profile := q.get("profile")) is not None:
+            # profile=none selects events that belong to no profile
+            found = [e for e in found if e.get("profile") == (None if profile == "none" else profile)]
+        return JSONResponse(found)
+
+    @server.custom_route("/trace/profiles", methods=["GET"], include_in_schema=False)
+    async def trace_profiles(request: Request) -> Response:
+        if not _local(request):
+            return Response(status_code=404)
+        return JSONResponse(profiles.list_all())
 
     return server
 

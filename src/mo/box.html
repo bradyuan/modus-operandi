@@ -4,31 +4,42 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  :root { --bg: #ffffff; --ink: #1d1d1b; --muted: #6b6a66; --line: #e3e1dc; --label: #1d4ed8; --ok: #2f7d4f; --bad: #b42318; color-scheme: light; }
+  :root { --bg: #ffffff; --ink: #1d1d1b; --muted: #6b6a66; --line: #e3e1dc; --label: #1d4ed8;
+          --ok: #2f7d4f; --bad: #b42318; --warn-bg: #fdecec; color-scheme: light; }
   @media (prefers-color-scheme: dark) {
-    :root { --bg: #1f1f1d; --ink: #ecebe7; --muted: #9b9a95; --line: #33322f; --label: #8fa5ff; --ok: #6cc690; --bad: #f08a80; color-scheme: dark; }
+    :root { --bg: #1f1f1d; --ink: #ecebe7; --muted: #9b9a95; --line: #33322f; --label: #8fa5ff;
+            --ok: #6cc690; --bad: #f08a80; --warn-bg: #3a1f1f; color-scheme: dark; }
   }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 system-ui, -apple-system, sans-serif; }
   .box { padding: 14px 16px; }
-  .label { font-weight: 700; font-size: 15px; color: var(--label); }
+  .label { font-weight: 700; font-size: 17px; color: var(--label); }
   .muted { color: var(--muted); font-size: 12px; }
-  .row { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 8px; }
-  button { font: inherit; border: 1px solid var(--line); background: var(--bg); color: var(--ink); border-radius: 8px; padding: 6px 14px; cursor: pointer; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+           border-radius: 8px; padding: 5px 12px; cursor: pointer; }
+  button.danger { border-color: var(--bad); color: var(--bad); }
   button:disabled { opacity: .5; cursor: default; }
+  input { font: inherit; border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+          border-radius: 8px; padding: 5px 10px; min-width: 0; flex: 1 1 160px; }
+  .list { margin: 10px 0; border-top: 1px solid var(--line); }
+  .item { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .item .name { font-weight: 600; flex: 1 1 120px; }
+  .confirm { background: var(--warn-bg); border-radius: 8px; padding: 8px 10px; margin: 8px 0; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
   .ok { color: var(--ok); } .bad { color: var(--bad); }
 </style>
 </head>
 <body>
 <div class="box">
   <div class="label" id="label">MO</div>
-  <div class="muted" id="meta">waiting for MO…</div>
-  <div class="row" id="buttons"></div>
-  <div id="status" class="muted">Only clicks in this box count. Typed answers in the chat aren't recorded.</div>
+  <div id="view"><div class="muted">Waiting for MO…</div></div>
+  <div class="muted" id="status" style="margin-top:10px">Only what you click or type in this box counts.</div>
 </div>
 <script>
-// Data arrives either through ChatGPT's window.openai globals or the MCP Apps postMessage bridge.
-// The key lives only in the tool result's hidden _meta; it is never put into widget state.
-let output = null, key = null, endpoint = null;
+// Shell: reads the box id from the tool result and the key from its hidden _meta, then talks to
+// MO directly. The key is never put into widget state or anywhere ChatGPT can read.
+let output = null, key = null, endpoint = null, started = false;
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 
 function find(obj, field, depth = 0) {
   if (!obj || typeof obj !== "object" || depth > 5) return undefined;
@@ -38,52 +49,76 @@ function find(obj, field, depth = 0) {
 }
 
 function absorb(structured, meta) {
-  if (structured) output = structured;
+  if (structured && structured.box) output = structured;
   if (meta) { key = find(meta, "mo/key") ?? key; endpoint = find(meta, "mo/endpoint") ?? endpoint; }
-  render();
+  if (!output || started) return;
+  $("label").textContent = output.label || "MO";
+  if (!key || !endpoint) { $("view").innerHTML = `<div class="bad">MO's key didn't reach this box, so it can't record anything.</div>`; return; }
+  started = true;
+  (VIEWS[output.view] || (() => { $("view").innerHTML = `<div class="bad">Unknown MO box.</div>`; }))();
 }
 
-function render() {
-  if (!output) return;
-  document.getElementById("label").textContent = output.label || "MO";
-  document.getElementById("meta").innerHTML =
-    `box ${output.box} · key ${key ? `<span class="ok">received …${key.slice(-4)}</span>` : `<span class="bad">missing</span>`}`;
-  const row = document.getElementById("buttons");
-  if (!row.children.length) for (const choice of output.choices || []) {
-    const b = document.createElement("button");
-    b.textContent = choice;
-    b.onclick = () => send(choice);
-    row.appendChild(b);
-  }
+function status(html) { $("status").innerHTML = html; }
+
+async function call(action, extra = {}) {
+  const r = await fetch(`${endpoint}/box/${output.box}/event`, {
+    method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({key, action, ...extra}),
+  });
+  const body = await r.json().catch(() => ({error: "MO sent an unreadable reply"}));
+  if (!r.ok) throw new Error(body.error || `MO refused (${r.status})`);
+  return body;
 }
 
-async function send(choice) {
-  const status = document.getElementById("status");
-  if (!key || !endpoint) { status.innerHTML = `<span class="bad">No key from MO, so this click can't be recorded.</span>`; return; }
-  status.textContent = "sending to MO…";
-  try {
-    const r = await fetch(`${endpoint}/box/${output.box}/event`, {
-      method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({key, action: "pick", choice}),
+async function guarded(fn) {
+  try { await fn(); } catch (e) { status(`<span class="bad">${esc(e.message)}</span>`); }
+}
+
+// --- profiles view
+function profilesView() {
+  const when = t => new Date(t * 1000).toLocaleDateString();
+  const draw = (list, confirm) => {
+    $("view").innerHTML = `
+      <div class="list">${list.length ? list.map(p => `
+        <div class="item"><span class="name">${esc(p.name)}</span>
+          <span class="muted">${p.seeds} seeds · ${p.tunes} tunes · created ${when(p.created)}</span>
+          <button class="danger" data-delete="${esc(p.name)}">Delete</button></div>
+        ${confirm && confirm.name === p.name ? `
+        <div class="confirm">Delete <b>${esc(p.name)}</b> permanently? ${confirm.lost.seeds} seeds and
+          ${confirm.lost.tunes} tunes will be lost.
+          <div class="row"><button class="danger" data-confirm="${esc(p.name)}">Confirm delete</button>
+          <button data-cancel>Cancel</button></div></div>` : ""}`).join("")
+        : `<div class="item muted">No profiles yet.</div>`}</div>
+      <div class="row"><input id="newname" placeholder="new profile name" maxlength="40" autocomplete="off">
+        <button id="create">Create</button></div>`;
+    $("create").onclick = () => guarded(async () => {
+      const r = await call("create", {name: $("newname").value});
+      status(`<span class="ok">Created ${esc(r.created.name)}.</span>`); draw(r.profiles);
     });
-    const body = await r.json();
-    status.innerHTML = r.ok ? `<span class="ok">MO recorded: HUMAN USER picked ${body.choice}</span>`
-                            : `<span class="bad">MO refused: ${body.error}</span>`;
-  } catch (e) {
-    status.innerHTML = `<span class="bad">Couldn't reach MO directly (${e.message}).</span>`;
-  }
+    $("newname").onkeydown = e => { if (e.key === "Enter") $("create").click(); };
+    document.querySelectorAll("[data-delete]").forEach(b => b.onclick = () => guarded(async () => {
+      const r = await call("delete", {name: b.dataset.delete});
+      draw(list, {name: b.dataset.delete, code: r.confirm, lost: r.will_lose});
+      pendingCode = r.confirm;
+    }));
+    document.querySelectorAll("[data-confirm]").forEach(b => b.onclick = () => guarded(async () => {
+      const r = await call("confirm_delete", {name: b.dataset.confirm, confirm: pendingCode});
+      status(`<span class="ok">Deleted ${esc(r.deleted.name)}.</span>`); draw(r.profiles);
+    }));
+    document.querySelectorAll("[data-cancel]").forEach(b => b.onclick = () => draw(list));
+  };
+  let pendingCode = null;
+  guarded(async () => draw((await call("list")).profiles));
 }
+
+const VIEWS = {profiles: profilesView};
 
 // ChatGPT globals (compatibility API)
-function fromOpenAI() {
-  const o = window.openai;
-  if (o) absorb(o.toolOutput, o.toolResponseMetadata);
-}
+function fromOpenAI() { const o = window.openai; if (o) absorb(o.toolOutput, o.toolResponseMetadata); }
 window.addEventListener("openai:set_globals", fromOpenAI);
 fromOpenAI();
 
 // MCP Apps bridge
-let nextId = 1;
 function post(msg) { window.parent.postMessage({jsonrpc: "2.0", ...msg}, "*"); }
 window.addEventListener("message", (event) => {
   const m = event.data;
@@ -92,7 +127,7 @@ window.addEventListener("message", (event) => {
   if (m.id === 1 && m.result) post({method: "ui/notifications/initialized", params: {}});
 });
 if (!window.openai) {
-  post({id: nextId++, method: "ui/initialize",
+  post({id: 1, method: "ui/initialize",
         params: {protocolVersion: "2026-01-26", appInfo: {name: "MO", version: "1"}, appCapabilities: {}}});
 }
 </script>

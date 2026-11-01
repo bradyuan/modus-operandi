@@ -45,3 +45,17 @@ def read(**filters: Any) -> list[dict[str, Any]]:
         return []
     events = [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
     return [e for e in events if all(e.get(k) == v for k, v in filters.items() if v is not None)]
+
+
+def purge_profile(name: str) -> int:
+    """Remove every event that belongs to a profile (deleting a profile is permanent, its trace
+    included). Returns how many were removed. The caller records the tombstone afterwards."""
+    path = _path()
+    if not path.exists():
+        return 0
+    lines = [line for line in path.read_text().splitlines() if line.strip()]
+    kept = [line for line in lines if json.loads(line).get("profile") != name]
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text("".join(line + "\n" for line in kept))
+    tmp.replace(path)
+    return len(lines) - len(kept)
