@@ -1,62 +1,75 @@
 # Modus Operandi (MO)
 
-**Long-Term Memory for AI**
+**Long-Term Memory for AI.** Everything you read makes sense to you. Everything you write sounds like you.
 
-Everything you read makes sense to you. Everything you write sounds like you.
+> **Status:** being rebuilt to the [v1 design](docs/DESIGN-v1.md). The commands below arrive with
+> the new prototype; the old one is kept under the `v0-prototype` git tag.
 
-> **Status:** redesign in progress. The v1 design is in [docs/DESIGN-v1.md](docs/DESIGN-v1.md)
-> (draft, pending sign-off). The current code is a prototype and will be rebuilt to match it.
+## Setup
 
-## 1. What problem does Modus Operandi solve?
+**Once:**
 
-Reading and writing with AI still takes hours, and the results don't feel like yours.
+```bash
+make setup
+```
 
-**Reading:** AI explanations are generic. They don't know what you already understand, which analogies click for you, or how deep to go. "Explain like I'm 5" is a difficulty level, not an explanation built for *your* brain.
+Installs everything MO needs (uv, cloudflared, Python packages). macOS with [Homebrew](https://brew.sh).
 
-**Writing:** AI drafts drift toward generic AI language. Even with instructions, longer pieces and later conversations lose your voice, and you spend as long fixing a draft as you would writing it.
+**Every time:**
 
-Both are the same problem: **the AI doesn't keep what you've taught it, and nothing makes it use what you've taught it.** An explanation is output, and so is an essay. MO fixes both with one mechanism.
+```bash
+make run
+```
 
-## 2. How does it work?
+Prints two links. Leave this terminal open; **Ctrl+C** stops MO.
 
-MO keeps a **persistent store of your own judgments**, per profile, and makes ChatGPT work through all of it before you see anything.
+```
+MO is reachable at:  https://<random-name>.trycloudflare.com/mcp/<secret>   ← for ChatGPT (keep private)
+Trace:               http://127.0.0.1:8000/trace                            ← for you (this computer only)
+```
+
+**Connect ChatGPT** (first time, and again whenever the link changes, which is every `make run`):
+
+1. ChatGPT → **Settings → Apps → Advanced → Developer mode** on.
+2. **Add custom MCP server** · Name: `MO` · URL: the *reachable at* link · Authentication: **none**.
+3. Already added before? Open **Settings → Apps → MO**, update the URL, and **Refresh**.
+4. Open a **new chat** and type `@MO`.
+
+## Use
 
 | Command | What you do | What happens |
 |---|---|---|
-| **`@MO seed`** | Paste a perfect example: your own writing, or an excerpt you want to sound like | Stored exactly as given |
-| **`@MO tune`** | Pick between three versions of a part (A / B / C) until it's right, saying why when it isn't | The whole back-and-forth is stored as one example |
-| **`@MO`** | Ask for anything: explain this paper, write this cover letter | ChatGPT drafts, then reworks the draft against your seeds and tunes, pass by pass, until it has gone through all of them. The result appears in the MO box. |
 | **`@MO profiles`** | List, create, or delete profiles | One profile per purpose: an AI tutor, an essay writer, a journal |
+| **`@MO seed`** | Paste a perfect example into the MO box: your writing, or an excerpt you want to sound like | Stored exactly as given |
+| **`@MO tune`** | Pick between A / B / C until it's right; say why when it isn't | The whole back-and-forth is stored as one example |
+| **`@MO`** | Ask for anything: explain this paper, write this cover letter | ChatGPT drafts, then reworks it against your seeds and tunes until it has used all of them; the result appears in the MO box |
 
-**Seeding and tuning fill the store. Output reads it.** Tunes you worked hardest on (the most rounds) go first, because ten rounds of "not quite" teach more than one "looks good."
+Every MO box shows which profile it's using. Click in the box; typed answers in the chat don't count.
 
-## 3. What makes it different
+## Check what happened
 
-- **MO doesn't trust the AI.** ChatGPT writes; it never judges, never carries your answers, and never decides what gets stored. Your clicks and notes go straight to MO.
-- **You are the only judge.** MO runs no checks and makes no AI calls. It records your evaluations, verbatim, and enforces the order of steps.
-- **Nothing is skipped silently.** Output appears only after ChatGPT has worked through your whole store. If it skips, there's no MO box, and you can see it.
-- **The wrong profile is never used.** If MO isn't sure which profile you mean, it asks.
+Open **http://127.0.0.1:8000/trace** while `make run` is running. It works only on this computer, never through the public link.
 
-## 4. Planned delivery
+- **Every event, with who caused it:** YOU (a click in the MO box), CHATGPT (a tool call), or MO.
+- **Outputs:** ChatGPT's first draft vs. the final, and every pass in between.
+- **Tune boxes:** every round, pick, and note.
+- **Alarms:** anything that broke the rules, e.g. a click that didn't come from the box, an old box reused, a pass skipped or unchanged, an output that was never shown.
 
-MO is planned as a ChatGPT plugin built on [MCP](https://modelcontextprotocol.io), with an MO box inside the chat for your clicks. Your data is kept to a minimum and yours to export or delete.
+For scripts and debugging: `/trace/events` (JSON), `/trace/events/stream` (live), `/trace/profiles/<name>`, `/trace/boxes/<id>`, `/trace/alarms`.
 
-## Development (prototype)
+## Why MO
 
-Requires [uv](https://docs.astral.sh/uv/) and [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) for testing in ChatGPT.
+AI explanations are generic: they don't know what you already understand, which analogies click, or how deep to go. AI writing drifts toward generic AI language, and longer pieces lose your voice. Both are the same problem: **the AI doesn't keep what you've taught it, and nothing makes it use it.**
 
-```bash
-uv sync          # install dependencies
-uv run pytest    # run tests
-uv run mo-dev    # start MO behind a temporary public link for ChatGPT, with a local trace page
-```
+MO keeps a store of **your own judgments** (seeds and tunes), per profile, and makes ChatGPT work through all of it before you see anything.
 
-`mo-dev` prints a private link (add it in ChatGPT as a custom MCP server, no authentication; it changes on every restart) and a trace page at `http://127.0.0.1:8000/trace` (this computer only) showing every call MO received.
+- **MO doesn't trust the AI.** ChatGPT writes; it never judges, never carries your answers, and never decides what's stored.
+- **You are the only judge.** MO runs no checks and makes no AI calls. It records your evaluations and enforces the order of steps.
+- **Nothing is skipped silently**, and **the wrong profile is never used**: when in doubt, MO asks.
 
-Data lives in `~/.mo/` (override with `MO_HOME`). Never commit it.
+Your data lives in `~/.mo/` on this computer. Never commit it.
 
 ## Docs
 
-- [Design v1](docs/DESIGN-v1.md): the design being built (draft)
+- [Design v1](docs/DESIGN-v1.md): the design being built
 - [Decisions](docs/decisions/): why the direction changed
-- [Prototype design](docs/DESIGN.md): the earlier design, kept for reference

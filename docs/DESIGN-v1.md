@@ -1,9 +1,8 @@
 # MO v1 — Design (draft for sign-off)
 
-Status: **Draft, not approved** · 2026-11-01
+Status: **Approved** · 2026-11-01 · see [decision 001](decisions/001-base-design.md)
 
-Replaces the prototype design. Nothing is built or deleted until the user signs off. Where this
-conflicts with `AGENTS.md`, `AGENTS.md` still wins until it is updated (with approval).
+Replaces the prototype design (kept under the `v0-prototype` git tag).
 
 ## 1. What MO is, from the user's side
 
@@ -38,7 +37,12 @@ notes, seeds, and profile choices go straight to MO; ChatGPT never carries them.
 - **There is no global "active profile."** Each MO box carries an ID, and MO records which profile
   you picked in that box. Follow-ups in the same chat carry the ID.
 - **No recognized ID → unchosen → the box asks you to pick a profile** before anything runs.
+- **Stale-ID rule:** boxes in a chat form a chain, and MO accepts only the **latest** box's ID. An
+  older (valid but stale) ID is treated as unrecognized → ask. So ChatGPT can't reuse an earlier
+  box to slip back to a profile you switched away from.
 - Rule: **when in doubt, ask.** A lost ID costs one click; a wrong profile is impossible by design.
+- **Every MO box shows its profile as a large label** ("Tuning · eli5-reader", "Output ·
+  job-apps"), so the profile in use is never in question.
 - Multiple chats can't interfere: there's no shared setting to overwrite.
 
 **`@MO profiles`** opens an MO box listing your profiles, each with its counts (seeds, sealed
@@ -100,8 +104,8 @@ pass 3:  tune boxes 11–30            │   • the CURRENT version    (carries
   (a 10-round box holds 9 corrections in your words); ties → newest first.
 - **Batch cut points (fixed code):** 3, 10, 30, 100, … (cumulative cut points; each pass gets only
   the boxes new since the previous cut).
-- **What a pass gets from each box:** final text, your note trail, and the rejected versions
-  *(assumption — confirm)*.
+- **What a pass gets from each box:** final text, your note trail, and the rejected versions.
+- **Seeds:** one pass; batched like tune boxes (3, 10, 30, …) only if they don't fit in one.
 - **Pass enforcement:** ChatGPT receives batch *k+1* only after handing MO the version from
   pass *k*. MO shows the output **only after the last pass**. Skipping passes means no MO box —
   visibly missing.
@@ -122,23 +126,117 @@ ChatGPT in the right order, and nothing appears in the MO box out of order. **No
 ChatGPT's writing quality. Measure whether the store helps by **rounds until ✓** per tune box over
 time — a count, not an evaluation.
 
-## 8. Trace (developer view)
+## 8. Security: the MO box's direct line to MO
 
-Per output: profile, batches handed out, **initial vs final** (before/after diff), and each pass's
-version. Per tune box: every round, pick, and note. Shows gaps (e.g. output started, never finished).
+ChatGPT must never be able to pick, seal, note, seed, or manage profiles, or pretend to be you.
 
-## 9. To verify before building
+```
+MO ──tool result──► ChatGPT ──► draws the MO box (MO's own code; ChatGPT can't change it)
+   └─ hidden field (_meta): per-box secret key — the box sees it, ChatGPT doesn't
+you click / type in the box ──HTTPS, signed with the key──► MO   (ChatGPT never relays it)
+```
 
-- ChatGPT Apps SDK: MO box buttons/text fields call MO **directly** (not through the model).
-- Tools that only the MO box can call (hidden from the model), so ChatGPT can't seal, pick, or switch profiles.
+- **ChatGPT has no eval tools.** Its tools only submit content (variants, pass versions). Picks,
+  ✓ / ↻, notes, seeds, and profile actions exist only behind the box's direct line.
+- **Every eval call must carry its box's key**; anything else is refused and logged.
+- **The key never goes anywhere ChatGPT can read** (e.g. not into the box's saved state).
+- **Locked rounds:** a round's A / B / C can't be replaced once shown; a new set is accepted only
+  after your ↻.
+- **Influence can't be blocked, only made obvious.** ChatGPT can comment beside the box, write
+  lopsided variants, or post a second reply. Every box carries its profile label and the line
+  *"Only what's in this box uses your profile."*
+- **Pass counts are shown in the output box** as plain facts, e.g. *"4 passes · pass 3 changed
+  nothing"* (a count, not a judgment).
+- **Typed answers don't count.** The box says so; there's no tool that could relay them.
+
+## 9. Observability
+
+MO only keeps books, so **every state change is an event, and the event log is the
+observability.** The rest is views over it.
+
+### 9.1 The event log (source of truth)
+
+Append-only, per profile. The store (seeds, sealed boxes) is derived from it. Every event records
+**who caused it**:
+
+| Actor | How MO knows | Examples |
+|---|---|---|
+| **YOU** | a call over the box's direct line with a valid key | picked B, ↻ with note, ✓, seed added, profile created / deleted / chosen |
+| **CHATGPT** | an ordinary tool call | variants submitted for round 2, pass 3 version submitted, output started |
+| **MO** | MO's own code | batch 2 handed out (boxes 4–10), round locked, box sealed, **request refused** (and why) |
+
+Filtering by actor answers "did ChatGPT touch my evals?" directly: **every YOU event must come
+from the box line; any eval-type event from CHATGPT is impossible by design, and any attempt
+appears as a refusal.**
+
+### 9.2 Traces (OpenTelemetry)
+
+- **One trace per output:** spans for the initial response → pass 0 (seeds) → pass 1…n (batch
+  sizes, box IDs used) → shown in the MO box.
+- **One trace per tune box:** a span per round (variants in, your pick, note, ↻ / ✓).
+- **Spans carry IDs and counts only, never your text**, so they can go to any OpenTelemetry backend
+  safely; the text stays in MO's store.
+
+### 9.3 Invariant alarms (deterministic)
+
+Computed from the event log; each is a fact, not a judgment:
+
+| Alarm | Means |
+|---|---|
+| Eval call without a valid key | something other than the box tried to act as you |
+| Stale box ID refused | ChatGPT reused an old box (wrong-profile attempt or slip) |
+| Variants resubmitted for a locked round | an attempt to change what you're choosing from |
+| Output started, never shown | ChatGPT skipped or abandoned the passes |
+| Pass submitted unchanged | a pass may have been faked (count shown, not judged) |
+| Pass out of order | ChatGPT tried to skip a batch (refused) |
+
+### 9.4 Metrics (counts only)
+
+- ⭐ **Rounds until ✓** per tune box over time — falls if the store is helping.
+- Passes per output; passes that changed nothing.
+- Tune boxes opened vs sealed; outputs started vs shown.
+- Refusals by type.
+
+### 9.5 Views
+
+- **Trace page** (local, this computer only): per output, **initial vs final** diff plus each
+  pass; per tune box, every round; per profile, the store and its changelog; an alarms panel.
+  Every row shows its actor (YOU / CHATGPT / MO).
+- Later, any OpenTelemetry backend (e.g. Jaeger, Grafana) for the ID-and-count traces.
+
+### 9.6 Developer access (dev mode only, this computer only)
+
+For debugging and iterating. Served only when MO runs in dev mode, and only to `127.0.0.1`
+(never through the tunnel).
+
+| Endpoint | Gives |
+|---|---|
+| `/trace` | the trace page (§9.5) |
+| `/trace/events` | the event log as JSON, filterable by profile, actor, box, type, time |
+| `/trace/events/stream` | live events as they happen (watch a ChatGPT session in real time) |
+| `/trace/profiles/<name>` | a profile's store: seeds, sealed boxes, counts |
+| `/trace/boxes/<id>` | one box: every round, pick, note, its profile and chain |
+| `/trace/alarms` | current invariant alarms |
+| `/trace/box/<id>/preview` | render a box exactly as ChatGPT would, to iterate on its look |
+
+Read-only by default. Any developer action that changes state (e.g. simulate a click to test a
+flow) is recorded as actor **DEV**, never YOU, so test data can't pass for your evals.
+
+### 9.7 What can't be observed
+
+If ChatGPT never calls MO, MO sees nothing. That gap is visible to you (no MO box) but not in the log.
+
+## 10. To verify before building (prototype step 1)
+
+- **`_meta` is hidden from ChatGPT:** put a test key there, ask ChatGPT what the tool result
+  contains; it must not be able to recite the key.
+- **The box can call MO directly** over HTTPS (`connect_domains`), with MO's domain allowlisted.
+- **Allowlist with a changing tunnel:** MO serves the box itself, so on each start it can allowlist
+  the current tunnel address. Check ChatGPT picks up the new allowlist after "Refresh" (if not,
+  use a named Cloudflare tunnel with a fixed address).
 - Size limits: how much text one pass can carry.
 
-## 10. Still open
+## 11. Still open
 
-- [ ] Seeds: one pass (assumed) or batched like tune boxes when there are many?
-- [ ] Per-box content in a pass: final + notes + rejected versions (assumed)?
-- [ ] Removing a single box or seed from a profile (and from where: the `@MO profiles` box?).
+- [ ] Removing a single tune box or seed from a profile (proposed: in the `@MO profiles` box).
 - [ ] Deleting a profile: permanent, or recoverable for a while (e.g. 30 days)?
-- [ ] `AGENTS.md` update to match (needs explicit approval) + decision record.
-- [ ] Rebuild plan: archive prototype under a git tag (`v0-prototype`), start fresh; reuse only
-      pieces that fit this design.
