@@ -2,7 +2,7 @@
 
 **Long-Term Memory for AI.** Everything you read makes sense to you. Everything you write sounds like you.
 
-> **Status:** being rebuilt to the [v1 design](docs/DESIGN-v1.md). The commands below arrive with
+> **Status:** being rebuilt to the [v1 design](docs/v1/DESIGN.md). The commands below arrive with
 > the new prototype; the old one is kept under the `v0-prototype` git tag.
 
 ## Setup
@@ -71,5 +71,5 @@ Your data lives in `~/.mo/` on this computer. Never commit it.
 
 ## Docs
 
-- [Design v1](docs/DESIGN-v1.md): the design being built
-- [Decisions](docs/decisions/): why the direction changed
+- [v1 design](docs/v1/DESIGN.md) and [v1 lessons](docs/v1/LESSONS.md): what's being built, and what building it teaches us
+- [v0 lessons](docs/v0/LESSONS.md): why the prototype was reset

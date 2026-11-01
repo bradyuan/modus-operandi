@@ -2,7 +2,7 @@
 
 > **Status: LOCKED.** This file is the project's source of truth. Changes require explicit human approval (see "Change control").
 
-This is the persistent source of truth for any AI agent working in this repo. If another file (README, DESIGN-v1.md, a conversation) conflicts with this one, **this file wins**. Flag the conflict instead of acting on the other source.
+This is the persistent source of truth for any AI agent working in this repo. If another file (README, a version's DESIGN.md, a conversation) conflicts with this one, **this file wins**. Flag the conflict instead of acting on the other source.
 
 ## What MO is
 
@@ -15,7 +15,7 @@ Goal: cut ~2h of reading/synthesis and ~2h of writing down to minutes each.
 ## Scope
 
 - **In scope:** shaping AI output (explanations and writing). Nothing else.
-- **Phase:** building the v1 prototype (`docs/DESIGN-v1.md`): local MCP server plus the MO box,
+- **Phase:** building v1 (`docs/v1/DESIGN.md`): local MCP server plus the MO box,
   behind a cloudflared tunnel, connected manually in ChatGPT developer mode.
 
 ## Core design
@@ -56,14 +56,16 @@ OpenTelemetry. Postgres once hosted. No vector database.
 ## Where things live
 
 - `README.md`: setup and public-facing description
-- `docs/DESIGN-v1.md`: the design being built
-- `docs/decisions/`: why the direction changed. Read these before re-proposing a rejected idea.
+- `docs/vN/DESIGN.md` and `docs/vN/LESSONS.md`: each version's design and what it taught us. The
+  highest N is current. Read earlier versions' LESSONS.md before re-proposing an idea.
 
 ## Change control
 
 - **Agents must not edit this file without explicit human approval.** Propose the change as a diff, explain why, and wait for a clear yes. Silence or ambiguity is not approval.
 - Approval for one change doesn't cover the next one.
-- Every approved change to "Core design" or "Scope" also gets a decision record in `docs/decisions/` (`NNN-short-title.md`: Context, Decision, Why).
+- Every approved change to "Core design" or "Scope" also gets a dated entry in the current
+  version's LESSONS.md. A version's DESIGN.md is frozen once building starts; resetting to a new
+  version (complete rebuild) needs explicit approval and gets a git tag.
 - Other files (`README.md`, `docs/*`) may be edited normally, but must not contradict this file.
 
 ## Working conventions

@@ -1,8 +1,8 @@
-# MO v1 — Design (draft for sign-off)
+# MO v1 — Design
 
-Status: **Approved** · 2026-11-01 · see [decision 001](decisions/001-base-design.md)
+Status: **Approved** · 2026-11-01 · frozen once building starts · log: [LESSONS.md](LESSONS.md)
 
-Replaces the prototype design (kept under the `v0-prototype` git tag).
+Replaces [v0](../v0/DESIGN.md), which hit its limit for the reasons in [v0 lessons](../v0/LESSONS.md).
 
 ## 1. What MO is, from the user's side
 
