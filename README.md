@@ -2,8 +2,8 @@
 
 **Long-Term Memory for AI.** Everything you read makes sense to you. Everything you write sounds like you.
 
-> **Status:** being rebuilt to the [v1 design](docs/v1/DESIGN.md). The commands below arrive with
-> the new prototype; the old one is kept under the `v0-prototype` git tag.
+> **Status:** building [v1](docs/v1/DESIGN.md). `make setup` and `make run` work; in ChatGPT only
+> `@MO spike` exists so far (the verification step). The old prototype is under the `v0-prototype` git tag.
 
 ## Setup
 

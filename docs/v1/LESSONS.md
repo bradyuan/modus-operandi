@@ -10,3 +10,22 @@ entry here says why, and v2 begins.
 - The human actor is named **HUMAN USER**; MO recognizes four actors (HUMAN USER, CHATGPT, MO, DEV).
 - Docs are versioned: `docs/vN/DESIGN.md` + `docs/vN/LESSONS.md`.
 - Not started: the verification spike (DESIGN §10) comes first.
+
+## 2026-11-01 — Verification spike built (step 1)
+
+- OpenAI's Apps SDK reference confirms a tool result's `_meta` is hidden from the model and readable
+  by the box, the box can call domains MO allowlists (`_meta.ui.csp.connectDomains`), and tools can
+  be limited to the app (`_meta.ui.visibility`).
+- ChatGPT caches the box by URI, and the allowlist holds the changing tunnel address, so the box
+  URI carries a tag of that address.
+- `@MO spike` shows a test box: key in `_meta`, clicks sent straight to MO, signed. Waiting on the
+  human user's test in ChatGPT.
+
+## 2026-11-01 — Spike passed
+
+- The MO box rendered in ChatGPT and received its key; the box's clicks reached MO directly
+  through the quick tunnel (so the per-run allowlist works) and were recorded as HUMAN USER,
+  exactly as clicked (C, then B).
+- Key test: asked to repeat the full tool result including hidden fields, ChatGPT returned only
+  the text content and said no metadata or keys reached it. Consistent with the Apps SDK docs.
+- No refused calls; ChatGPT made one tool call per `@MO spike`.
