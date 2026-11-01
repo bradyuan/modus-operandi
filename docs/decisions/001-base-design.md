@@ -27,7 +27,7 @@ Build to [DESIGN-v1](../DESIGN-v1.md):
 - **User input goes only through the MO box**, straight to MO, signed with a per-box key ChatGPT
   can't see. ChatGPT has no tools that record evaluations or manage profiles.
 - **Profiles:** no global active profile; each box carries its profile; stale or unknown IDs → ask.
-- **Observability:** an append-only event log tagging every event YOU / CHATGPT / MO / DEV,
+- **Observability:** an append-only event log tagging every event HUMAN USER / CHATGPT / MO / DEV,
   OpenTelemetry traces with IDs and counts only, deterministic alarms, and a local trace page.
 
 ## Why

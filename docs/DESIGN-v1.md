@@ -20,13 +20,24 @@ Analogy: tuning and seeding fill a photo album; output is the barber reading the
 
 ## 2. The rule that shapes everything
 
-**ChatGPT produces content. MO keeps the books. You do all evaluation.**
+**ChatGPT produces content. MO keeps the books. The HUMAN USER does all evaluation.**
+
+MO recognizes exactly four actors, and every event it records names one of them:
+
+| Actor | Who | How MO knows |
+|---|---|---|
+| **HUMAN USER** | the person using MO | only a call over the MO box's direct line, signed with that box's key |
+| **CHATGPT** | the host AI | an ordinary tool call |
+| **MO** | MO's own code | internal (batching, sealing, refusals) |
+| **DEV** | the developer, while debugging | a dev-only endpoint on this computer (§9.6) |
+
+Nothing else counts as the HUMAN USER: not text typed in the chat, not anything ChatGPT relays.
 
 | Who | Does | Never does |
 |---|---|---|
 | **ChatGPT** | organizes replies into parts, writes drafts and A/B/C variants | relays your input, chooses profiles, moves the pipeline, evaluates |
 | **MO** | shows choices, records clicks/notes/seeds verbatim, seals boxes, ranks and hands out the store, enforces the order of steps | runs checks, judges or interprets text, calls an AI |
-| **You** | pick, reject, finalize, explain why, seed, choose the profile | — |
+| **HUMAN USER** | pick, reject, finalize, explain why, seed, choose the profile | — |
 
 **All your input goes through the MO box** (an MO-drawn panel inside the ChatGPT chat). Clicks,
 notes, seeds, and profile choices go straight to MO; ChatGPT never carries them.
@@ -161,11 +172,11 @@ Append-only, per profile. The store (seeds, sealed boxes) is derived from it. Ev
 
 | Actor | How MO knows | Examples |
 |---|---|---|
-| **YOU** | a call over the box's direct line with a valid key | picked B, ↻ with note, ✓, seed added, profile created / deleted / chosen |
+| **HUMAN USER** | a call over the box's direct line with a valid key | picked B, ↻ with note, ✓, seed added, profile created / deleted / chosen |
 | **CHATGPT** | an ordinary tool call | variants submitted for round 2, pass 3 version submitted, output started |
 | **MO** | MO's own code | batch 2 handed out (boxes 4–10), round locked, box sealed, **request refused** (and why) |
 
-Filtering by actor answers "did ChatGPT touch my evals?" directly: **every YOU event must come
+Filtering by actor answers "did ChatGPT touch my evals?" directly: **every HUMAN USER event must come
 from the box line; any eval-type event from CHATGPT is impossible by design, and any attempt
 appears as a refusal.**
 
@@ -201,7 +212,7 @@ Computed from the event log; each is a fact, not a judgment:
 
 - **Trace page** (local, this computer only): per output, **initial vs final** diff plus each
   pass; per tune box, every round; per profile, the store and its changelog; an alarms panel.
-  Every row shows its actor (YOU / CHATGPT / MO).
+  Every row shows its actor (HUMAN USER / CHATGPT / MO / DEV).
 - Later, any OpenTelemetry backend (e.g. Jaeger, Grafana) for the ID-and-count traces.
 
 ### 9.6 Developer access (dev mode only, this computer only)
@@ -220,7 +231,7 @@ For debugging and iterating. Served only when MO runs in dev mode, and only to `
 | `/trace/box/<id>/preview` | render a box exactly as ChatGPT would, to iterate on its look |
 
 Read-only by default. Any developer action that changes state (e.g. simulate a click to test a
-flow) is recorded as actor **DEV**, never YOU, so test data can't pass for your evals.
+flow) is recorded as actor **DEV**, never HUMAN USER, so test data can't pass for the human user's evals.
 
 ### 9.7 What can't be observed
 

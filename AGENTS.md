@@ -38,7 +38,7 @@ Goal: cut ~2h of reading/synthesis and ~2h of writing down to minutes each.
    Unknown or stale box IDs → ask. A wrong profile must be impossible.
 8. **Deterministic where MO acts, visible where ChatGPT acts.** MO guarantees its state, the order
    of steps, and visibility of gaps, not the quality of ChatGPT's writing. The user's picks are the gate.
-9. **Observability:** an append-only event log tagging every event YOU / CHATGPT / MO / DEV;
+9. **Observability:** an append-only event log tagging every event HUMAN USER / CHATGPT / MO / DEV;
    OpenTelemetry traces with IDs and counts only; deterministic alarms; a local trace page.
 10. **Private by design.** Store the minimum; data is exportable and deletable. Development runs
     locally (tunnel); the product is hosted.

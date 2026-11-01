@@ -50,7 +50,7 @@ Every MO box shows which profile it's using. Click in the box; typed answers in 
 
 Open **http://127.0.0.1:8000/trace** while `make run` is running. It works only on this computer, never through the public link.
 
-- **Every event, with who caused it:** YOU (a click in the MO box), CHATGPT (a tool call), or MO.
+- **Every event, with who caused it:** HUMAN USER (a click in the MO box), CHATGPT (a tool call), MO, or DEV (you, debugging).
 - **Outputs:** ChatGPT's first draft vs. the final, and every pass in between.
 - **Tune boxes:** every round, pick, and note.
 - **Alarms:** anything that broke the rules, e.g. a click that didn't come from the box, an old box reused, a pass skipped or unchanged, an output that was never shown.
