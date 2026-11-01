@@ -41,6 +41,27 @@ WRITING_STEPS = [
 ]
 
 
+READING_STEPS = [
+    "Read the source yourself and gather broadly: claims, how it works, examples, prerequisites, "
+    "background, caveats, and exact quotes with where they appear.",
+    "Explain it using RULES: 'always' rules strictly, 'prefer' rules where they fit. Apply MODIFIERS to "
+    "this explanation only.",
+    "Stay faithful: no claims, numbers, or quotes that aren't in the source. Say what the source leaves out.",
+    "If it doesn't click, or the user asks for a different explanation, call mo_tune(action='start', "
+    "mode='draft', task='reading', target=<the part that didn't land>, source=<the source>).",
+    "When the user says what they liked or didn't, call mo_record(kind='rating', task='reading').",
+]
+def reading_kit(profile: Profile, source: str | None = None, question: str | None = None,
+                modifiers: list[str] | None = None) -> dict[str, Any]:
+    rules = select_rules(profile.rules(), "reading", "other")
+    notes = []
+    if not rules:
+        notes.append("New reader profile: explain plainly with the main point first, then offer @MO tune "
+                     "(mode='diagnostic', task='reading') to learn what clicks for them.")
+    return {"profile": profile.name, "task": "reading", "source": source, "question": question,
+            "rules": rules, "modifiers": modifiers or [], "steps": READING_STEPS, "notes": notes}
+
+
 def select_rules(rules: list[dict[str, Any]], task: str, register: str) -> list[dict[str, Any]]:
     selected = []
     for rule in rules:

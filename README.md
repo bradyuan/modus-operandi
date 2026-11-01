@@ -4,7 +4,8 @@
 
 Everything you read makes sense to you. Everything you write sounds like you.
 
-> **Status:** early design. No code yet. See [docs/DESIGN.md](docs/DESIGN.md).
+> **Status:** redesign in progress. The v1 design is in [docs/DESIGN-v1.md](docs/DESIGN-v1.md)
+> (draft, pending sign-off). The current code is a prototype and will be rebuilt to match it.
 
 ## 1. What problem does Modus Operandi solve?
 
@@ -14,81 +15,48 @@ Reading and writing with AI still takes hours, and the results don't feel like y
 
 **Writing:** AI drafts drift toward generic AI language. Even with instructions, longer pieces and later conversations lose your voice, and you spend as long fixing a draft as you would writing it.
 
-Reading and synthesizing a topic can take 2 hours. Writing it up can take another 2. MO aims to cut each to minutes.
+Both are the same problem: **the AI doesn't keep what you've taught it, and nothing makes it use what you've taught it.** An explanation is output, and so is an essay. MO fixes both with one mechanism.
 
-## 2. What does Modus Operandi do?
+## 2. How does it work?
 
-MO keeps a **persistent profile of you** and applies it in two directions.
+MO keeps a **persistent store of your own judgments**, per profile, and makes ChatGPT work through all of it before you see anything.
 
-**Reading (world → you):** Give MO any source, such as a paper, a contract, or an article. It explains the source in terms that make sense to you, builds on what you already know, and points back to the original so you can check what was simplified.
+| Command | What you do | What happens |
+|---|---|---|
+| **`@MO seed`** | Paste a perfect example: your own writing, or an excerpt you want to sound like | Stored exactly as given |
+| **`@MO tune`** | Pick between three versions of a part (A / B / C) until it's right, saying why when it isn't | The whole back-and-forth is stored as one example |
+| **`@MO`** | Ask for anything: explain this paper, write this cover letter | ChatGPT drafts, then reworks the draft against your seeds and tunes, pass by pass, until it has gone through all of them. The result appears in the MO box. |
+| **`@MO profiles`** | List, create, or delete profiles | One profile per purpose: an AI tutor, an essay writer, a journal |
 
-**Writing (you → world):** Give MO a rough idea and some data. It turns them into finished prose in your voice, using only the claims your data supports.
+**Seeding and tuning fill the store. Output reads it.** Tunes you worked hardest on (the most rounds) go first, because ten rounds of "not quite" teach more than one "looks good."
 
-## 3. How does it work?
+## 3. What makes it different
 
-### Calibrate, then use
+- **MO doesn't trust the AI.** ChatGPT writes; it never judges, never carries your answers, and never decides what gets stored. Your clicks and notes go straight to MO.
+- **You are the only judge.** MO runs no checks and makes no AI calls. It records your evaluations, verbatim, and enforces the order of steps.
+- **Nothing is skipped silently.** Output appears only after ChatGPT has worked through your whole store. If it skips, there's no MO box, and you can see it.
+- **The wrong profile is never used.** If MO isn't sure which profile you mean, it asks.
 
-MO has two modes:
+## 4. Planned delivery
 
-1. **Calibrate:** Short exercises build your profile: pick which explanation clicks, choose which paragraph sounds like you, upload writing samples. You approve every change to your profile before it takes effect.
-2. **Use:** MO reads your profile while you work, but **never changes it on its own**. That way your profile can't slowly drift.
+MO is planned as a ChatGPT plugin built on [MCP](https://modelcontextprotocol.io), with an MO box inside the chat for your clicks. Your data is kept to a minimum and yours to export or delete.
 
-### It learns from you, with your approval
+## Development (prototype)
 
-While you use MO, it notices patterns: what you rate well or poorly, and how you edit its drafts. It saves these as suggestions for your next calibration. For example: *"You removed em dashes in 9 of 11 drafts. Add a rule?"*
-
-### A profile you can read
-
-Your profile is compact, human-readable text: preferences with the reasons behind them, plus a few examples of what you liked best. You can open it, edit it, and take it to any AI model.
-
-## 4. How is it different from an ordinary LLM?
-
-Ordinary LLMs start fresh, or rely on loose memory and instructions that drift over time.
-
-**MO keeps a stable, user-approved profile of how you understand and how you write, and applies it every time.**
-
-## 5. Planned delivery
-
-MO is planned as an [MCP](https://modelcontextprotocol.io) app, so one profile works across ChatGPT, Claude, and other AI tools: type `@MO read`, `@MO write`, or `@MO tune`.
-
-MO is a **harness**, not another AI. It keeps your profile, hands it to the AI you're already using, and checks the result. Your data is kept to a minimum, encrypted, and yours to export or delete.
-
-## Development
-
-Requires [uv](https://docs.astral.sh/uv/) and Node.js (for the MCP Inspector).
+Requires [uv](https://docs.astral.sh/uv/) and [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) for testing in ChatGPT.
 
 ```bash
-uv sync                      # install dependencies
-uv run pytest                # run tests
-uv run mo-server             # run over stdio
-uv run mo-server --transport http --port 8000   # run over HTTP at http://127.0.0.1:8000/mcp
-uv run mo-actions --port 8000                    # or: plain HTTPS API for a Custom GPT (docs/GPT.md)
-uv run python evals/calibrate_voice.py <corpus-dir>  # calibrate voice checks on real authors
-
-# Try the tools in a browser UI
-npx @modelcontextprotocol/inspector uv run mo-server
+uv sync          # install dependencies
+uv run pytest    # run tests
+uv run mo-dev    # start MO behind a temporary public link for ChatGPT, with a local trace page
 ```
 
-### Connect to ChatGPT (developer mode)
+`mo-dev` prints a private link (add it in ChatGPT as a custom MCP server, no authentication; it changes on every restart) and a trace page at `http://127.0.0.1:8000/trace` (this computer only) showing every call MO received.
 
-```bash
-cloudflared tunnel --url http://127.0.0.1:8000
-# prints https://<random-name>.trycloudflare.com; in a second terminal:
-uv run mo-server --transport http --port 8000 --public-host <random-name>.trycloudflare.com
-# prints the full link with a secret path; keep it private
-```
-
-In ChatGPT: **Settings → Apps & Connectors → Advanced → Developer mode**, then create a connector with that link and no authentication. The tunnel name changes on every restart, so update the link each session.
-
-### Profiles
-
-Manage profiles from inside ChatGPT with `@MO profile`: list, create, and switch profiles, save your own writing samples ("use this essay as a sample" saves it right away). Use `@MO tune` to get variations until one fits, or to calibrate with a writing or reading diagnostic.
-
-Data lives in `~/.mo/` (override with `MO_HOME`): profiles in `profiles/<name>/`, a tool-call log in `logs/calls.jsonl`. Samples are plain files in `profiles/<name>/exemplars/<register>/`, where register is one of `email`, `essay`, `cover_letter`, `article`, `notes`, or `other`. Never commit them.
+Data lives in `~/.mo/` (override with `MO_HOME`). Never commit it.
 
 ## Docs
 
-- [Design](docs/DESIGN.md): product design and open questions
-- [Read](docs/READ.md): how reading explanations are learned
-- [GPT](docs/GPT.md): running MO as a Custom GPT (temporary; Custom GPTs are being retired)
+- [Design v1](docs/DESIGN-v1.md): the design being built (draft)
 - [Decisions](docs/decisions/): why the direction changed
+- [Prototype design](docs/DESIGN.md): the earlier design, kept for reference

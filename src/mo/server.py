@@ -7,13 +7,16 @@ import functools
 import inspect
 import os
 import secrets
+from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
+from starlette.requests import Request
+from starlette.responses import HTMLResponse, JSONResponse, Response
 
-from mo import api
-from mo.store import mo_home
+from mo import api, trace
+from mo.store import mo_home, read_trace
 
 server = MCPServer("MO", title="Modus Operandi", instructions=api.INSTRUCTIONS)
 
@@ -33,6 +36,29 @@ def _as_tool_errors(fn):
 
 for _fn in api.TOOLS:
     server.tool(title=api.TITLES[_fn.__name__], description=inspect.cleandoc(_fn.__doc__))(_as_tool_errors(_fn))
+
+
+LOCAL_HOSTS = ("127.0.0.1", "localhost", "[::1]")
+
+
+def _local(request: Request) -> bool:
+    """The trace holds the user's full text: serve it to this computer only, never through the tunnel."""
+    host = request.headers.get("host", "")
+    return host.rsplit(":", 1)[0] in LOCAL_HOSTS if not host.startswith("[") else host.startswith("[::1]")
+
+
+@server.custom_route("/trace", methods=["GET"], include_in_schema=False)
+async def trace_page(request: Request) -> Response:
+    if not _local(request):
+        return Response(status_code=404)
+    return HTMLResponse(Path(__file__).with_name("trace.html").read_text())
+
+
+@server.custom_route("/trace.json", methods=["GET"], include_in_schema=False)
+async def trace_data(request: Request) -> Response:
+    if not _local(request):
+        return Response(status_code=404)
+    return JSONResponse(trace.runs(read_trace()))
 
 
 def _secret() -> str:

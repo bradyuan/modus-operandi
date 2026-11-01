@@ -25,15 +25,23 @@ def cases(profile="default"):
     return Profile(profile).cases()
 
 
-def test_draft_pick_finishes_and_records(mo_home):
+def rules(profile="default"):
+    return {r["rule"]: (r["hits"], r["misses"]) for r in Profile(profile).rules()}
+
+
+def test_draft_pick_finishes_and_stores_the_result_in_code(mo_home):
     plan = start(mode="draft", target="I am writing to apply for the role.")
     assert plan["status"] == "show_variations"
     assert set(plan["variations"]) == {"A", "B", "C"}
-    done = answer(plan["session"], "picked", chosen="B")
+    done = answer(plan["session"], "picked", chosen="B", note="host-written text that must not be stored")
     assert done["status"] == "done" and "variation B" in done["next"]
+    picked = f"{plan['axis']}: {plan['variations']['B']}"
+    assert done["stored"] == {"rule": picked, "picked": 1, "passed_over": 0}
+    # Worded from MO's own labels; the picked option gains a hit, the others a miss.
+    assert rules() == {f"{plan['axis']}: {plan['variations'][k]}": (k == "B", k != "B") for k in "ABC"}
     [case] = cases()
-    assert case["data"]["outcome"] == "picked" and case["data"]["chosen"] == "B"
-    assert case["data"]["passed_over"] == ["A", "C"]
+    assert case["type"] == "tune_result" and case["data"]["chosen"] == "B"
+    assert "must not be stored" not in str(case)
 
 
 def test_none_fit_stays_on_target_and_changes_dimension(mo_home):
@@ -43,7 +51,7 @@ def test_none_fit_stays_on_target_and_changes_dimension(mo_home):
     assert again["target"] == "Opening sentence"          # same part, not the next one
     assert again["axis"] != plan["axis"]                  # a different dimension
     assert any("already rejected" in s for s in again["steps"])
-    assert cases()[0]["data"]["outcome"] == "none_fit"
+    assert cases() == [] and rules() == {}               # mid-run: nothing stored
 
 
 def test_asks_whats_off_after_two_misses_then_uses_the_note(mo_home):
@@ -61,7 +69,29 @@ def test_skip_records_no_preference(mo_home):
     plan = start(mode="draft", target="x")
     done = answer(plan["session"], "skipped")
     assert done["status"] == "done"
-    assert cases() == []
+    assert cases() == [] and rules() == {}
+
+
+def test_abandoned_run_stores_nothing(mo_home):
+    old = start(mode="draft", target="x")
+    answer(old["session"], "none_fit")
+    new = start(mode="draft", target="y")
+    assert new["abandoned"] == [old["session"]]
+    assert cases() == [] and rules() == {}
+    with pytest.raises(ToolError):
+        anyio.run(server.call_tool, "mo_tune", {"action": "answer", "session": old["session"],
+                                                "outcome": "picked", "chosen": "A"})
+
+
+def test_repeated_picks_strengthen_the_rule_the_kit_sends(mo_home):
+    for n in range(3):
+        plan = start(mode="draft", task="reading", target="x")
+        answer(plan["session"], "picked", chosen="C")
+    kit = anyio.run(server.call_tool, "mo_read", {"source": "TCP"}).structured_content
+    top = kit["rules"][0]
+    assert top["rule"] == f"{plan['axis']}: {plan['variations']['C']}"
+    assert top["strength"] == "always"                    # 3 picks, 0 misses -> weight 0.8
+    assert len(kit["rules"]) == 1                         # passed-over options never reach the kit
 
 
 def test_diagnostic_pick_and_skip_advance_but_none_fit_does_not(mo_home):
@@ -73,7 +103,7 @@ def test_diagnostic_pick_and_skip_advance_but_none_fit_does_not(mo_home):
     assert picked["round"] == 2
     skipped = answer(plan["session"], "skipped")
     assert skipped["round"] == 3
-    assert [c["data"]["outcome"] for c in cases()] == ["none_fit", "picked"]
+    assert [c["data"]["chosen"] for c in cases()] == ["A"]
 
 
 def test_diagnostic_finishes_after_last_round(mo_home):

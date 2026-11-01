@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MO trace</title>
+<style>
+  :root {
+    --bg: #f7f6f3; --card: #ffffff; --ink: #1d1d1b; --muted: #6b6a66; --line: #e3e1dc;
+    --add-bg: #dcf2e3; --add-ink: #14532d; --del-bg: #f9dede; --del-ink: #7f1d1d;
+    --warn-bg: #fff4d6; --warn-ink: #6b4a00; --ok: #2f7d4f; --bad: #b42318; --accent: #3b5bdb;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161614; --card: #1f1f1d; --ink: #ecebe7; --muted: #9b9a95; --line: #33322f;
+      --add-bg: #173a24; --add-ink: #b5ebc6; --del-bg: #4a1f1f; --del-ink: #f6c1c1;
+      --warn-bg: #3d3214; --warn-ink: #f3dc9b; --ok: #6cc690; --bad: #f08a80; --accent: #8fa5ff;
+      color-scheme: dark;
+    }
+  }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 64px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: baseline; justify-content: space-between; }
+  h1 { font-size: 20px; margin: 0; }
+  .muted { color: var(--muted); }
+  .run { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin-top: 18px; }
+  .run h2 { font-size: 15px; margin: 0 0 6px; display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; }
+  .pill { font-size: 12px; padding: 1px 8px; border-radius: 99px; border: 1px solid var(--line); color: var(--muted); }
+  .warn { background: var(--warn-bg); color: var(--warn-ink); border-radius: 6px; padding: 6px 10px; margin: 6px 0; font-size: 14px; }
+  details { margin: 10px 0; }
+  summary { cursor: pointer; font-weight: 600; }
+  .version { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 10px; }
+  .version h3 { font-size: 14px; margin: 0 0 6px; display: flex; gap: 8px; flex-wrap: wrap; align-items: baseline; }
+  .passed { color: var(--ok); } .failed { color: var(--bad); }
+  .text { white-space: pre-wrap; font: 14px/1.6 ui-serif, Georgia, serif; }
+  ins { background: var(--add-bg); color: var(--add-ink); text-decoration: none; border-radius: 3px; }
+  del { background: var(--del-bg); color: var(--del-ink); border-radius: 3px; }
+  ul { margin: 4px 0; padding-left: 20px; }
+  textarea { width: 100%; box-sizing: border-box; min-height: 110px; font: 14px/1.5 ui-serif, Georgia, serif;
+             background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+  .stat { font-size: 13px; color: var(--muted); }
+  button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--ink); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>MO trace</h1>
+    <span class="muted">Newest first. Green = added, red = removed. <button id="reload">Reload</button></span>
+  </header>
+  <p class="muted">Each run: what MO sent ChatGPT, then every draft ChatGPT sent to MO's check. Version 1 is what
+    ChatGPT generated; later versions are its revisions after MO's flags (MO never rewrites text itself).
+    Paste what ChatGPT showed you at the bottom of a run to see what changed after MO's last check.</p>
+  <div id="runs"></div>
+</main>
+<script>
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const when = t => new Date(t * 1000).toLocaleString();
+
+// Word-level diff (LCS). Drafts are short, so O(n*m) is fine.
+function diff(a, b) {
+  const x = a.split(/(\s+)/), y = b.split(/(\s+)/);
+  const n = x.length, m = y.length, dp = Array.from({length: n + 1}, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    dp[i][j] = x[i] === y[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  let i = 0, j = 0, out = "", same = 0;
+  while (i < n && j < m) {
+    if (x[i] === y[j]) { out += esc(x[i]); if (x[i].trim()) same++; i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) out += `<del>${esc(x[i++])}</del>`;
+    else out += `<ins>${esc(y[j++])}</ins>`;
+  }
+  while (i < n) out += `<del>${esc(x[i++])}</del>`;
+  while (j < m) out += `<ins>${esc(y[j++])}</ins>`;
+  const words = Math.max(x.filter(w => w.trim()).length, y.filter(w => w.trim()).length) || 1;
+  return {html: out, changed: Math.round(100 * (1 - same / words))};
+}
+
+function flags(list) {
+  if (!list.length) return "";
+  return "<ul>" + list.map(f => `<li><b>${esc(f.type)}</b>: ${esc(f.detail)}${f.fix ? ` <span class="muted">→ ${esc(f.fix)}</span>` : ""}</li>`).join("") + "</ul>";
+}
+
+function kitPanel(kit) {
+  if (!kit) return `<p class="muted">No kit: ChatGPT didn't call mo_write or mo_read first.</p>`;
+  const r = kit.result, a = kit.args;
+  const rules = r.rules.length ? "<ul>" + r.rules.map(x => `<li>[${esc(x.strength)}] ${esc(x.rule)}</li>`).join("") + "</ul>" : "<p class='muted'>none</p>";
+  const samples = (r.exemplars || []).map(e => `<details><summary>${esc(e.register)}/${esc(e.name)}</summary><div class="text">${esc(e.text)}</div></details>`).join("") || "<p class='muted'>none</p>";
+  const asked = Object.entries(a).filter(([k, v]) => v !== null && v !== undefined && !(Array.isArray(v) && !v.length))
+    .map(([k, v]) => `<li><b>${esc(k)}</b>: ${esc(typeof v === "string" ? v : JSON.stringify(v))}</li>`).join("");
+  return `<details><summary>What ChatGPT asked MO for</summary><ul>${asked}</ul></details>
+    <details open><summary>What MO sent back: ${r.rules.length} rule(s), ${(r.exemplars || []).length} sample(s)</summary>
+      <b>Rules</b>${rules}<b>Samples</b>${samples}
+      ${r.notes.length ? "<b>Notes</b><ul>" + r.notes.map(n => `<li>${esc(n)}</li>`).join("") + "</ul>" : ""}
+    </details>`;
+}
+
+function versionsPanel(versions) {
+  return versions.map((v, k) => {
+    const m = v.metrics || {};
+    const head = `<h3>Version ${k + 1}${k === 0 ? " · ChatGPT's draft" : " · revised after MO's flags"}
+      <span class="${v.status === "passed" ? "passed" : "failed"}">${esc(v.status)}</span>
+      <span class="stat">${m.word_count ?? "?"} words · voice distance ${m.voice_distance ?? "n/a (no samples)"}</span></h3>`;
+    let body;
+    if (k === 0) body = `<div class="text">${esc(v.draft)}</div>`;
+    else { const d = diff(versions[k - 1].draft, v.draft); body = `<p class="stat">${d.changed}% of words changed from version ${k}</p><div class="text">${d.html}</div>`; }
+    return `<div class="version">${head}${body}${v.flags.length ? "<b>MO flagged</b>" + flags(v.flags) : ""}</div>`;
+  }).join("");
+}
+
+function finalPanel(run, id) {
+  if (!run.versions.length) return "";
+  return `<div class="version"><h3>What ChatGPT showed you</h3>
+    <textarea id="paste-${id}" placeholder="Paste the reply you saw in ChatGPT"></textarea>
+    <div id="cmp-${id}"></div></div>`;
+}
+
+function compare(run, id) {
+  const box = document.getElementById(`paste-${id}`), out = document.getElementById(`cmp-${id}`);
+  if (!box) return;
+  const key = `mo-trace-${run.at}`;
+  try { box.value = localStorage.getItem(key) || ""; } catch {}
+  const render = () => {
+    try { localStorage.setItem(key, box.value); } catch {}
+    if (!box.value.trim()) { out.innerHTML = ""; return; }
+    const last = run.versions[run.versions.length - 1].draft, first = run.versions[0].draft;
+    const d = diff(last, box.value.trim()), all = diff(first, box.value.trim());
+    out.innerHTML = `<p class="stat">${d.changed}% of words changed after MO's last check
+      ${d.changed > 0 ? "<b>(this part was never checked)</b>" : ""} · ${all.changed}% changed from ChatGPT's first draft</p>
+      <div class="text">${d.html}</div>`;
+  };
+  box.addEventListener("input", render);
+  render();
+}
+
+async function load() {
+  const runs = (await (await fetch("trace.json")).json()).reverse();
+  const root = document.getElementById("runs");
+  if (!runs.length) { root.innerHTML = `<p class="muted">No traced calls yet. Use MO in ChatGPT while mo-dev is running.</p>`; return; }
+  root.innerHTML = runs.map((run, id) => {
+    const kit = run.kit, tool = kit ? kit.tool : "no kit";
+    const profile = kit ? kit.result.profile : (run.events[0]?.result?.profile ?? "");
+    const what = kit ? (kit.args.register || kit.args.source || kit.args.question || "") : "";
+    const events = run.events.length ? `<details><summary>Other calls (${run.events.length})</summary><ul>${run.events.map(e =>
+      `<li>${when(e.at)} <b>${esc(e.tool)}</b> ${esc(e.args.action || e.args.kind || "")} ${e.error ? `<span class="failed">${esc(e.error)}</span>` : ""}
+       <details><summary>details</summary><div class="text">${esc(JSON.stringify({args: e.args, result: e.result}, null, 2))}</div></details></li>`).join("")}</ul></details>` : "";
+    return `<section class="run"><h2>${esc(tool)} <span class="pill">${esc(profile)}</span> <span class="pill">${esc(what)}</span>
+        <span class="muted">${when(run.at)}</span></h2>
+      ${run.warnings.map(w => `<div class="warn">⚠ ${esc(w)}</div>`).join("")}
+      ${kitPanel(kit)}${versionsPanel(run.versions)}${finalPanel(run, id)}${events}</section>`;
+  }).join("");
+  runs.forEach((run, id) => compare(run, id));
+}
+document.getElementById("reload").addEventListener("click", load);
+load();
+</script>
+</body>
+</html>

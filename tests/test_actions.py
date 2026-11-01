@@ -38,7 +38,7 @@ def test_openapi_schema_for_gpt_actions(client):
     schema = client.get("/openapi.json").json()
     assert schema["servers"] == [{"url": "https://example.trycloudflare.com"}]
     ops = {op["operationId"] for path in schema["paths"].values() for op in path.values()}
-    assert ops == {"mo_write", "mo_check", "mo_tune", "mo_record", "mo_profile"}
+    assert ops == {"mo_read", "mo_write", "mo_check", "mo_tune", "mo_record", "mo_profile"}
     descriptions = [op["description"] for path in schema["paths"].values() for op in path.values()]
     assert all(len(d) <= 300 for d in descriptions)          # GPT Actions limit
 

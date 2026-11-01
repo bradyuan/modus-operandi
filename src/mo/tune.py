@@ -3,9 +3,13 @@
 A session targets one part (a sentence, a paragraph, a section of a source). The user
 answers each round with one of three outcomes (AGENTS.md, core design item 3):
 
-    picked    record the pick; draft mode is done, diagnostic mode moves to the next round
+    picked    the round is finished: MO stores the result in the profile, in code; draft mode is
+              done, diagnostic mode moves to the next round
     none_fit  stay on the SAME target; try another dimension; ask what's off after 2 misses
-    skipped   record no preference; move on
+    skipped   move on
+
+Progression is deterministic: nothing is stored mid-round (rejections live only in the session),
+a pick is stored the moment it happens, and a run abandoned for a new one stores nothing.
 """
 
 from __future__ import annotations
@@ -69,6 +73,7 @@ def start(
     target: str | None = None,
     source: str | None = None,
 ) -> dict[str, Any]:
+    abandoned = _abandon_open_runs(profile.name)
     session = {
         "id": secrets.token_hex(4),
         "profile": profile.name,
@@ -86,7 +91,10 @@ def start(
         "done": False,
     }
     _save(session)
-    return _plan(session)
+    plan = _plan(session)
+    if abandoned:
+        plan["abandoned"] = abandoned  # unfinished runs on this profile; nothing from them was stored
+    return plan
 
 
 def answer(session_id: str, outcome: str, chosen: str | None = None, note: str | None = None) -> dict[str, Any]:
@@ -100,13 +108,15 @@ def answer(session_id: str, outcome: str, chosen: str | None = None, note: str |
     if outcome == "picked":
         if chosen not in labels:
             raise ValueError("outcome 'picked' needs chosen = 'A', 'B', or 'C'")
-        _record(profile, session, axis_name, labels, "picked", chosen, note)
+        stored = _store_pick(profile, session, axis_name, labels, chosen)
         if session["mode"] == "draft":
-            return _finish(session, f"Use variation {chosen} ({labels[chosen]}) for the target part.")
-        return _advance(session)
+            result = _finish(session, f"Use variation {chosen} ({labels[chosen]}) for the target part.")
+        else:
+            result = _advance(session)
+        result["stored"] = stored
+        return result
 
     if outcome == "none_fit":
-        _record(profile, session, axis_name, labels, "none_fit", None, note)
         session["misses"] += 1
         session["rejected"] += [f"{axis_name}: {o}" for o in options]
         if note:
@@ -140,7 +150,7 @@ def _next_untried_axis(session: dict[str, Any]) -> int:
 
 def _advance(session: dict[str, Any]) -> dict[str, Any]:
     if session["round"] >= MAX_DIAGNOSTIC_ROUNDS:
-        return _finish(session, "Diagnostic complete. Thank the user; their picks are recorded.")
+        return _finish(session, "Diagnostic complete. Tell the user what MO stored from their picks.")
     session.update(round=session["round"] + 1, tried_axes=[], misses=0, rejected=[], notes=[], target=None)
     session["axis"] = _first_axis(session["task"], session["round"])
     _save(session)
@@ -153,23 +163,25 @@ def _finish(session: dict[str, Any], instruction: str) -> dict[str, Any]:
     return {"session": session["id"], "profile": session["profile"], "status": "done", "next": instruction}
 
 
-def _record(profile, session, axis_name, labels, outcome, chosen, note) -> None:
-    profile.append_case({
-        "type": "variations",
-        "task": session["task"],
-        "register": session["register"],
-        "data": {
-            "mode": session["mode"],
-            "outcome": outcome,
-            "axis": axis_name,
-            "options": labels,
-            "chosen": chosen,
-            "passed_over": [k for k in labels if k != chosen],
-            "attempt": session["misses"] + 1,
-            "target": session["target"],
-            "note": note,
-        },
-    })
+def _store_pick(profile, session, axis_name, labels, chosen) -> dict[str, Any]:
+    rule = profile.record_pick(session["task"], axis_name, labels, chosen)
+    profile.append_case({"type": "tune_result", "task": session["task"], "register": session["register"],
+                         "data": {"session": session["id"], "mode": session["mode"], "axis": axis_name,
+                                  "options": labels, "chosen": chosen, "rejected_rounds": session["misses"]}})
+    return {"rule": rule["rule"], "picked": rule["hits"], "passed_over": rule["misses"]}
+
+
+def _abandon_open_runs(profile_name: str) -> list[str]:
+    """Only one run per profile is open at a time; starting another closes the old one, storing nothing."""
+    folder = mo_home() / "sessions"
+    closed = []
+    for path in sorted(folder.glob("*.json")) if folder.is_dir() else []:
+        session = json.loads(path.read_text())
+        if session["profile"] == profile_name and not session["done"]:
+            session.update(done=True, abandoned=True)
+            _save(session)
+            closed.append(session["id"])
+    return closed
 
 
 def _plan(session: dict[str, Any]) -> dict[str, Any]:

@@ -98,3 +98,23 @@ def test_tool_calls_and_failures_are_logged_without_text(mo_home):
     assert lines[1]["status"] == "failed_checks"
     assert "missing" in lines[2]["error"]
     assert "excited" not in json.dumps(lines)
+
+
+def test_profile_names_are_case_insensitive(mo_home):
+    assert ok({"action": "create", "name": "ELI5-reader"})["profile"] == "eli5-reader"
+    assert ok({"action": "use", "name": "Eli5-Reader"})["profile"] == "eli5-reader"
+
+
+def test_stated_rules_reach_the_right_kit(mo_home):
+    ok({"action": "create", "name": "reader"})
+    ok({"action": "add_rule", "text": "Open with a real puzzle, not fluff.", "task": "reading"})
+    ok({"action": "add_rule", "text": "Short sentences."})  # both
+    read = ok({"source": "CAP theorem"}, tool="mo_read")
+    assert [r["rule"] for r in read["rules"]] == ["Open with a real puzzle, not fluff.", "Short sentences."]
+    assert all(r["strength"] == "always" for r in read["rules"])
+    write = ok({"register": "essay"}, tool="mo_write")
+    assert [r["rule"] for r in write["rules"]] == ["Short sentences."]
+    assert ok({"action": "add_rule", "text": "short sentences."})["reinforced"] == "Short sentences."
+    ok({"action": "remove_rule", "text": "Short sentences."})
+    assert [r["rule"] for r in ok({"action": "show"})["rules"]] == ["Open with a real puzzle, not fluff."]
+    fails({"action": "remove_rule", "text": "Short sentences."})

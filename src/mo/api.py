@@ -22,6 +22,8 @@ from mo.store import (
     log_call,
     resolve_profile,
     set_active_profile,
+    trace_call,
+    tracing,
     validate_register,
 )
 
@@ -29,6 +31,7 @@ Register = Literal["email", "essay", "cover_letter", "article", "notes", "other"
 assert set(REGISTERS) == set(Register.__args__)  # keep the schema in sync with storage
 
 TITLES = {
+    "mo_read": "Explain something the way the user understands",
     "mo_write": "Write in the user's voice",
     "mo_check": "Check a draft",
     "mo_tune": "Tune: variations until one fits",
@@ -36,26 +39,51 @@ TITLES = {
     "mo_profile": "Manage the user's profile",
 }
 INSTRUCTIONS = (
-    "MO keeps the user's persistent profile of how they write and read. Call mo_write before writing "
-    "anything for the user, follow the kit's steps, and call mo_check before showing a draft. When the "
+    "MO keeps the user's persistent profile of how they write and read. Call mo_read before explaining "
+    "anything the user wants to understand and mo_write before writing anything for them, follow the kit's steps, and call mo_check before showing a draft. When the "
     "user wants changes or variations, use mo_tune and follow its replies exactly. Use mo_profile to list, "
-    "create, or switch profiles and to save the user's own writing. MO never writes text itself; you do, "
+    "create, or switch profiles, to save the user's own writing, and to save rules the user approves. MO never writes text itself; you do, "
     "using the kit."
 )
 
 
 def logged(fn):
-    """Log failures too, so problems show up in calls.jsonl (successes log their own details)."""
+    """Log failures too, so problems show up in calls.jsonl (successes log their own details).
+    In dev (MO_TRACE=1), also trace every call in full for the trace page."""
+    signature = inspect.signature(fn)
 
     @functools.wraps(fn)
     def wrapper(*args, **kwargs):
+        bound = signature.bind(*args, **kwargs)
         try:
-            return fn(*args, **kwargs)
+            result = fn(*args, **kwargs)
         except ValueError as exc:
             log_call(fn.__name__, {"action": kwargs.get("action"), "error": str(exc)})
+            if tracing():
+                trace_call(fn.__name__, bound.arguments, error=str(exc))
             raise
+        if tracing():
+            trace_call(fn.__name__, bound.arguments, result)
+        return result
 
     return wrapper
+
+
+@logged
+def mo_read(
+    source: str | None = None,
+    question: str | None = None,
+    modifiers: list[str] | None = None,
+    profile: str | None = None,
+) -> dict[str, Any]:
+    """Use whenever the user wants to understand something: '@MO read', 'explain this', 'ELI5', a blog
+    post, paper, article, or topic. Call this BEFORE explaining. Returns a kit: the user's reading rules
+    and steps to follow. Pass the link, title, or topic as `source` and what they want to know as
+    `question`. Omit `profile` to use the active one."""
+    p = resolve_profile(profile)
+    kit = kits.reading_kit(p, source, question, modifiers)
+    log_call("mo_read", {"profile": p.name, "rules": len(kit["rules"])})
+    return kit
 
 
 @logged
@@ -156,23 +184,26 @@ def mo_record(
 
 @logged
 def mo_profile(
-    action: Literal["list", "create", "use", "show", "add_sample", "remove_sample"],
+    action: Literal["list", "create", "use", "show", "add_sample", "remove_sample",
+                    "add_rule", "remove_rule"],
     name: str | None = None,
     register: Register | None = None,
     text: str | None = None,
     sample: str | None = None,
+    task: Literal["reading", "writing", "both"] = "both",
 ) -> dict[str, Any]:
     """Use for '@MO profile' and anything about the user's MO profiles: list them ('list'), create one
     ('create', name), switch ('use', name), or see what's in one ('show'). When the user says to use or
     save text as a sample of their writing, call 'add_sample' (register, text) right away: their request
     is the confirmation. Never add text you wrote. Remove a sample with 'remove_sample' (register,
-    sample)."""
-    result = _profile_action(action, name, register, text, sample)
+    sample). When the user states or approves a rule ('always use short sentences'), call 'add_rule'
+    (text = the rule in a few words, task = reading, writing, or both); 'remove_rule' (text) drops one."""
+    result = _profile_action(action, name, register, text, sample, task)
     log_call("mo_profile", {"action": action, "profile": result.get("profile")})
     return result
 
 
-TOOLS = [mo_write, mo_check, mo_tune, mo_record, mo_profile]
+TOOLS = [mo_read, mo_write, mo_check, mo_tune, mo_record, mo_profile]
 
 
 def host_guide() -> str:
@@ -182,7 +213,7 @@ def host_guide() -> str:
     return f"{INSTRUCTIONS}\n\nWhen to call each MO action:\n\n{tools}"
 
 
-def _profile_action(action, name, register, text, sample) -> dict[str, Any]:
+def _profile_action(action, name, register, text, sample, task="both") -> dict[str, Any]:
     if action == "list":
         return {"profiles": list_profiles(), "active": active_profile(), "profile": active_profile()}
 
@@ -210,8 +241,9 @@ def _profile_action(action, name, register, text, sample) -> dict[str, Any]:
             for r in p.registers_with_exemplars()
         }
         data = p.load()
+        rules = [{"rule": r["rule"], "task": r.get("scope", ["reading", "writing"])} for r in data["rules"]]
         return {"profile": p.name, "active": p.name == active_profile(), "samples": samples,
-                "rules": len(data["rules"]), "candidates": len(data["candidates"]), "cases": len(p.cases())}
+                "rules": rules, "candidates": len(data["candidates"]), "cases": len(p.cases())}
 
     if action == "add_sample":
         p = resolve_profile(name)
@@ -231,6 +263,19 @@ def _profile_action(action, name, register, text, sample) -> dict[str, Any]:
         if not p.remove_exemplar(reg, _require(sample, "sample")):
             raise ValueError(f"No {reg} sample named {sample!r} in profile {p.name!r}")
         return {"profile": p.name, "removed": sample, "register": reg}
+
+    if action == "add_rule":
+        p = resolve_profile(name)
+        scope = ["reading", "writing"] if task == "both" else [task]
+        rule = p.add_rule(_require(text, "text").strip(), scope, [register] if register else None)
+        return {"profile": p.name, "reinforced" if rule.get("reinforced") else "added": rule["rule"],
+                "task": rule["scope"]}
+
+    if action == "remove_rule":
+        p = resolve_profile(name)
+        if not p.remove_rule(_require(text, "text").strip()):
+            raise ValueError(f"No rule {text!r} in profile {p.name!r}; see action 'show'")
+        return {"profile": p.name, "removed": text}
 
     raise ValueError(f"Unknown action {action!r}")
 

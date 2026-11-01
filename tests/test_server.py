@@ -11,7 +11,7 @@ def call(name, args):
 
 def test_tools_are_listed():
     names = {t.name for t in anyio.run(server.list_tools)}
-    assert names == {"mo_write", "mo_check", "mo_record", "mo_profile", "mo_tune"}
+    assert names == {"mo_read", "mo_write", "mo_check", "mo_record", "mo_profile", "mo_tune"}
 
 
 def test_write_check_record_round_trip(mo_home):
@@ -31,3 +31,12 @@ def test_write_check_record_round_trip(mo_home):
 def test_bad_profile_name_is_rejected(mo_home):
     with pytest.raises(ValueError):
         Profile("../etc")
+
+
+def test_dev_reads_the_tunnel_address_from_cloudflared_output():
+    from mo.dev import tunnel_host
+
+    log = ["2026-10-31T01:56:33Z INF Requesting new quick Tunnel on trycloudflare.com...",
+           "2026-10-31T01:56:36Z INF |  https://stud-phones-perry-generic.trycloudflare.com                |"]
+    assert tunnel_host(log) == "stud-phones-perry-generic.trycloudflare.com"
+    assert tunnel_host(["no address here"]) is None
