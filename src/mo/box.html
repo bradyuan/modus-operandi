@@ -12,32 +12,54 @@
   }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 system-ui, -apple-system, sans-serif; }
   .box { padding: 14px 16px; }
+  .head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
   .label { font-weight: 700; font-size: 17px; color: var(--label); }
+  .voice { font-weight: 600; color: var(--label); }
   .muted { color: var(--muted); font-size: 12px; }
   button { font: inherit; border: 1px solid var(--line); background: var(--bg); color: var(--ink);
            border-radius: 8px; padding: 5px 12px; cursor: pointer; }
   button.danger { border-color: var(--bad); color: var(--bad); }
+  button.primary { border-color: var(--label); color: var(--label); font-weight: 600; }
   button:disabled { opacity: .5; cursor: default; }
-  input { font: inherit; border: 1px solid var(--line); background: var(--bg); color: var(--ink);
-          border-radius: 8px; padding: 5px 10px; min-width: 0; flex: 1 1 160px; }
+  input, textarea, select { font: inherit; border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+                            border-radius: 8px; padding: 5px 10px; min-width: 0; box-sizing: border-box; }
+  input { flex: 1 1 160px; }
+  textarea { width: 100%; min-height: 160px; resize: vertical; margin-top: 10px; }
   .list { margin: 10px 0; border-top: 1px solid var(--line); }
   .item { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 0; border-bottom: 1px solid var(--line); }
   .item .name { font-weight: 600; flex: 1 1 120px; }
+  .tag { font-size: 11px; color: var(--label); border: 1px solid var(--label); border-radius: 99px; padding: 0 7px; }
   .confirm { background: var(--warn-bg); border-radius: 8px; padding: 8px 10px; margin: 8px 0; }
   .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
   .ok { color: var(--ok); } .bad { color: var(--bad); }
+  .tabs { display: flex; flex-wrap: wrap; gap: 2px; margin-top: 10px; border-bottom: 1px solid var(--line); }
+  .tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; color: var(--muted);
+                 background: none; padding: 6px 12px; margin-bottom: -1px; }
+  .tabs button.on { color: var(--ink); border-bottom-color: var(--label); font-weight: 600; }
+  .final { white-space: pre-wrap; margin-top: 10px; font: 15px/1.65 ui-serif, Georgia, serif; }
+  .controls { border-top: 1px solid var(--line); margin-top: 12px; padding-top: 8px; }
+  .target { background: color-mix(in srgb, var(--label) 14%, transparent); border-radius: 4px; padding: 0 2px; }
+  .variant { display: flex; gap: 8px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .variant .text { white-space: pre-wrap; font: 15px/1.6 ui-serif, Georgia, serif; flex: 1; }
+  .history { font-size: 12px; color: var(--muted); margin-top: 10px; }
+  .stub { color: var(--muted); font-size: 13px; overflow: hidden; transition: opacity .3s; }
+  .folding { animation: fold .45s ease forwards; }
+  @keyframes fold { from { opacity: 1; max-height: 1600px; } to { opacity: .6; max-height: 2.2em; } }
+  .help dt { font-weight: 600; margin-top: 10px; } .help dd { margin: 2px 0 0; color: var(--muted); }
+  code { font-size: 13px; }
 </style>
 </head>
 <body>
 <div class="box">
-  <div class="label" id="label">MO</div>
+  <div class="head"><div class="label" id="label">MO</div><div id="voice"></div></div>
   <div id="view"><div class="muted">Waiting for MO…</div></div>
-  <div class="muted" id="status" style="margin-top:10px">Only what you click or type in this box counts.</div>
+  <div class="muted" id="status" style="margin-top:10px"></div>
 </div>
 <script>
 // Shell: reads the box id from the tool result and the key from its hidden _meta, then talks to
 // MO directly. The key is never put into widget state or anywhere ChatGPT can read.
-let output = null, key = null, endpoint = null, started = false;
+let output = null, key = null, endpoint = null, snapshot = null, started = false;
+let state = {voice: null, profiles: []};   // this chat's voice (AGENTS.md item 7) and all profile names
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 
@@ -50,68 +72,451 @@ function find(obj, field, depth = 0) {
 
 function absorb(structured, meta) {
   if (structured && structured.box) output = structured;
-  if (meta) { key = find(meta, "mo/key") ?? key; endpoint = find(meta, "mo/endpoint") ?? endpoint; }
+  if (meta) { key = find(meta, "mo/key") ?? key; endpoint = find(meta, "mo/endpoint") ?? endpoint;
+              snapshot = find(meta, "mo/snapshot") ?? snapshot; }
   if (!output || started) return;
-  $("label").textContent = output.label || "MO";
-  if (!key || !endpoint) { $("view").innerHTML = `<div class="bad">MO's key didn't reach this box, so it can't record anything.</div>`; return; }
+  if (!key || !endpoint) { $("view").innerHTML = `<div class="bad">MO's key didn't reach this window, so it can't record anything.</div>`; return; }
   started = true;
-  (VIEWS[output.view] || (() => { $("view").innerHTML = `<div class="bad">Unknown MO box.</div>`; }))();
+  const view = VIEWS[output.view];
+  if (!view) { $("view").innerHTML = `<div class="bad">Unknown MO window.</div>`; return; }
+  guarded(view);
 }
 
 function status(html) { $("status").innerHTML = html; }
 
+class Offline extends Error {}   // couldn't reach MO at all (network down, laptop asleep, tunnel reconnecting)
+
 async function call(action, extra = {}) {
-  const r = await fetch(`${endpoint}/box/${output.box}/event`, {
-    method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({key, action, ...extra}),
-  });
+  let r;
+  try {
+    r = await fetch(`${endpoint}/box/${output.box}/event`, {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({key, action, ...extra}),
+    });
+  } catch (e) {
+    throw new Offline("Can't reach MO right now. Reconnecting…");
+  }
   const body = await r.json().catch(() => ({error: "MO sent an unreadable reply"}));
   if (!r.ok) throw new Error(body.error || `MO refused (${r.status})`);
   return body;
 }
 
 async function guarded(fn) {
-  try { await fn(); } catch (e) { status(`<span class="bad">${esc(e.message)}</span>`); }
+  try { await fn(); } catch (e) { status(`<span class="${e instanceof Offline ? "muted" : "bad"}">${esc(e.message)}</span>`); }
 }
 
-// --- profiles view
-function profilesView() {
+// Keep a window alive through network drops: run `fn` (one check-in); on a network error, say so and
+// try again in a few seconds instead of giving up. Returns false when it gave up for another reason.
+async function resilient(fn, retry) {
+  try { await fn(); return true; }
+  catch (e) {
+    if (e instanceof Offline) { status(`<span class="muted">${esc(e.message)}</span>`); setTimeout(retry, 4000); return true; }
+    status(`<span class="bad">${esc(e.message)}</span>`); return false;
+  }
+}
+
+// Post a message into the chat as the window, so ChatGPT continues a run (spike 2). Output windows
+// don't scroll the chat (the result stays in view); tune rounds do, since the next round's window
+// appears at the bottom.
+async function tellChatGPT(prompt, scrollToBottom = false) {
+  if (window.openai?.sendFollowUpMessage) await window.openai.sendFollowUpMessage({prompt, scrollToBottom});
+  else post({id: 2, method: "ui/message", params: {role: "user", content: [{type: "text", text: prompt}]}});
+}
+const continueRun = (run, what = "clicked") => tellChatGPT(`${what} · continue MO run ${run}`);
+
+// While tuning, float the window (picture-in-picture) so it stays visible as the chat moves.
+async function floatWindow() {
+  try { if (window.openai?.requestDisplayMode && window.openai.displayMode !== "pip") await window.openai.requestDisplayMode({mode: "pip"}); }
+  catch { /* not supported here: the window stays inline */ }
+}
+
+// The chat's voice, shown read-only in the header of config windows.
+async function refreshVoice(next) {
+  state = next || await call("state");
+  $("voice").innerHTML = state.voice
+    ? `<span class="muted">Voice for this chat:</span> <span class="voice">${esc(state.voice)}</span>`
+    : `<span class="muted">No voice for this chat yet</span>`;
+}
+
+// --- help window
+function helpView() {
+  $("label").textContent = "MO · Help";
+  $("view").innerHTML = `<dl class="help">
+    <dt><code>@MO</code> followed by anything</dt>
+    <dd>Output: explain, summarize, analyze, write… ChatGPT's answer is reworked against your seeds and shown in an
+        MO Output window. Attach files or paste text and links in the chat as usual.</dd>
+    <dt><code>@MO</code> · <code>@MO config</code> · <code>@MO profile</code></dt>
+    <dd>The Config window: pick the voice for this chat, create or delete profiles.</dd>
+    <dt><code>@MO seed</code></dt>
+    <dd>The Config window on Seeds: paste perfect examples (yours, or anyone's) into this chat's voice.</dd>
+    <dt><code>@MO tune</code> · or <b>Tune voice profile</b> under an output</dt>
+    <dd>Click Begin Tuning (optionally say what bothers you, or click the sentences). Then click A, B, or C; the next
+        round varies your pick. Click Done to keep it: the tune goes into the voice.</dd>
+    <dt><code>@MO help</code></dt>
+    <dd>This window.</dd>
+    <dt>Voice for this chat</dt>
+    <dd>Each chat has its own voice (a profile). Only you set it, in an MO window in that chat; it stays until you
+        change it. A new chat asks on its first output. Every result says which voice it was written in.</dd>
+  </dl>`;
+  status("Only what you click or type in an MO window counts. Typed answers in the chat aren't recorded.");
+}
+
+// --- config window: Profiles and Seeds tabs, both about this chat's voice
+function configView() {
+  $("label").textContent = "MO · Config";
+  const TABS = [["profiles", "Profiles", profilesTab], ["seeds", "Seeds", seedsTab], ["tunes", "Tunes", tunesTab]];
+  $("view").innerHTML = `<div class="tabs" id="tabs"></div><div id="pane"></div>`;
+  const open = tab => {
+    $("tabs").innerHTML = TABS.map(([id, name]) => `<button data-tab="${id}" class="${id === tab ? "on" : ""}">${name}</button>`).join("");
+    document.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { status(""); open(b.dataset.tab); });
+    (TABS.find(t => t[0] === tab) || TABS[0])[2]();
+  };
+  return refreshVoice().then(() => open(output.tab || "profiles"));
+}
+
+function profilesTab() {
   const when = t => new Date(t * 1000).toLocaleDateString();
-  const draw = (list, confirm) => {
-    $("view").innerHTML = `
+  let list = [], pending = null;   // pending: {what, name, code, lost}
+  const draw = () => {
+    $("pane").innerHTML = `
       <div class="list">${list.length ? list.map(p => `
         <div class="item"><span class="name">${esc(p.name)}</span>
           <span class="muted">${p.seeds} seeds · ${p.tunes} tunes · created ${when(p.created)}</span>
-          <button class="danger" data-delete="${esc(p.name)}">Delete</button></div>
-        ${confirm && confirm.name === p.name ? `
-        <div class="confirm">Delete <b>${esc(p.name)}</b> permanently? ${confirm.lost.seeds} seeds and
-          ${confirm.lost.tunes} tunes will be lost.
-          <div class="row"><button class="danger" data-confirm="${esc(p.name)}">Confirm delete</button>
-          <button data-cancel>Cancel</button></div></div>` : ""}`).join("")
+          ${p.name === state.voice ? `<span class="tag">voice for this chat</span>`
+            : `<button class="primary" data-use="${esc(p.name)}">Use in this chat</button>`}
+          <button data-ask="clear_seeds" data-name="${esc(p.name)}" ${p.seeds ? "" : "disabled"}>Clear seeds</button>
+          <button class="danger" data-ask="delete" data-name="${esc(p.name)}">Delete</button></div>
+        ${pending && pending.name === p.name ? `
+        <div class="confirm">${pending.what === "delete"
+            ? `Delete <b>${esc(p.name)}</b> permanently? ${pending.lost.seeds} seeds and ${pending.lost.tunes} tunes will be lost.`
+            : `Clear all ${pending.lost.seeds} seeds from <b>${esc(p.name)}</b> permanently? Its ${pending.lost.tunes} tunes stay.`}
+          <div class="row"><button class="danger" data-confirm>Confirm</button><button data-cancel>Cancel</button></div></div>` : ""}`).join("")
         : `<div class="item muted">No profiles yet.</div>`}</div>
       <div class="row"><input id="newname" placeholder="new profile name" maxlength="40" autocomplete="off">
         <button id="create">Create</button></div>`;
     $("create").onclick = () => guarded(async () => {
       const r = await call("create", {name: $("newname").value});
-      status(`<span class="ok">Created ${esc(r.created.name)}.</span>`); draw(r.profiles);
+      status(`<span class="ok">Created ${esc(r.created.name)}.</span>`); await show(r);
     });
     $("newname").onkeydown = e => { if (e.key === "Enter") $("create").click(); };
-    document.querySelectorAll("[data-delete]").forEach(b => b.onclick = () => guarded(async () => {
-      const r = await call("delete", {name: b.dataset.delete});
-      draw(list, {name: b.dataset.delete, code: r.confirm, lost: r.will_lose});
-      pendingCode = r.confirm;
+    document.querySelectorAll("[data-use]").forEach(b => b.onclick = () => guarded(async () => {
+      await refreshVoice(await call("set_voice", {name: b.dataset.use}));
+      status(`<span class="ok">Voice for this chat: ${esc(state.voice)}.</span>`); draw();
     }));
-    document.querySelectorAll("[data-confirm]").forEach(b => b.onclick = () => guarded(async () => {
-      const r = await call("confirm_delete", {name: b.dataset.confirm, confirm: pendingCode});
-      status(`<span class="ok">Deleted ${esc(r.deleted.name)}.</span>`); draw(r.profiles);
+    document.querySelectorAll("[data-ask]").forEach(b => b.onclick = () => guarded(async () => {
+      const r = await call(b.dataset.ask, {name: b.dataset.name});
+      pending = {what: b.dataset.ask, name: b.dataset.name, code: r.confirm, lost: r.will_lose}; draw();
     }));
-    document.querySelectorAll("[data-cancel]").forEach(b => b.onclick = () => draw(list));
+    const confirm = document.querySelector("[data-confirm]");
+    if (confirm) confirm.onclick = () => guarded(async () => {
+      const r = await call(`confirm_${pending.what}`, {name: pending.name, confirm: pending.code});
+      status(`<span class="ok">${pending.what === "delete" ? `Deleted ${esc(pending.name)}.` : `Cleared ${r.cleared} seeds from ${esc(pending.name)}.`}</span>`);
+      await show(r);
+    });
+    const cancel = document.querySelector("[data-cancel]");
+    if (cancel) cancel.onclick = () => { pending = null; draw(); };
   };
-  let pendingCode = null;
-  guarded(async () => draw((await call("list")).profiles));
+  const show = async r => { list = r.profiles; pending = null; await refreshVoice(); draw(); };
+  guarded(async () => show(await call("list")));
 }
 
-const VIEWS = {profiles: profilesView};
+function seedsTab() {
+  if (!state.voice) {
+    $("pane").innerHTML = `<div class="muted" style="margin-top:10px">Pick the voice for this chat on the Profiles tab first;
+      seeds go into that profile.</div>`;
+    return;
+  }
+  $("pane").innerHTML = `
+    <div class="muted" style="margin-top:8px">Paste a perfect example into <b>${esc(state.voice)}</b>: your own writing,
+      or writing you want to sound like. Saved as plain text, exactly as pasted.</div>
+    <textarea id="seedtext" placeholder="Paste here"></textarea>
+    <div class="row"><button id="save">Save seed</button><span class="muted" id="count">0 words</span></div>
+    <div id="seeds"></div>`;
+  const words = () => $("seedtext").value.trim().split(/\s+/).filter(Boolean).length;
+  const ready = () => { $("save").disabled = !words(); $("count").textContent = `${words()} words`; };
+  // The voice's seeds as a checklist; checked ones are deleted right away (no confirmation).
+  const drawSeeds = list => {
+    const when = t => new Date(t * 1000).toLocaleString();
+    $("seeds").innerHTML = `
+      <div class="row" style="margin-top:14px"><b>Seeds in ${esc(state.voice)} (${list.length})</b>
+        ${list.length ? `<button class="danger" id="delseeds" disabled>Delete selected</button>` : ""}</div>
+      <div class="list">${list.length ? list.map(s => `
+        <div class="item"><input type="checkbox" data-seed="${esc(s.id)}" style="flex:0 0 auto">
+          <details style="flex:1 1 200px"><summary>${esc(s.text.slice(0, 90))}${s.text.length > 90 ? "…" : ""}</summary>
+            <div style="white-space:pre-wrap;margin-top:6px">${esc(s.text)}</div></details>
+          <span class="muted">${s.words} words · ${when(s.added)}</span></div>`).join("")
+        : `<div class="item muted">No seeds yet.</div>`}</div>`;
+    const checks = [...document.querySelectorAll("[data-seed]")];
+    checks.forEach(b => b.onchange = () => { $("delseeds").disabled = !checks.some(x => x.checked); });
+    const del = $("delseeds");
+    if (del) del.onclick = () => guarded(async () => {
+      const r = await call("delete_seeds", {ids: checks.filter(b => b.checked).map(b => b.dataset.seed)});
+      status(`<span class="ok">Deleted ${r.deleted.length} seed${r.deleted.length === 1 ? "" : "s"}.</span>`);
+      drawSeeds(r.seeds);
+    });
+  };
+  const loadSeeds = () => guarded(async () => drawSeeds((await call("list_seeds")).seeds));
+  $("seedtext").oninput = ready;
+  $("save").onclick = () => guarded(async () => {
+    const r = await call("add_seed", {text: $("seedtext").value});
+    status(`<span class="ok">Saved to ${esc(r.saved.profile)} · ${r.saved.words} words. Paste another to add more.</span>`);
+    $("seedtext").value = ""; ready(); loadSeeds();
+  });
+  ready();
+  loadSeeds();
+}
+
+// Tunes tab: the voice's confirmed tunes; checked ones are deleted right away (no confirmation).
+function tunesTab() {
+  if (!state.voice) {
+    $("pane").innerHTML = `<div class="muted" style="margin-top:10px">Pick the voice for this chat on the Profiles tab first.</div>`;
+    return;
+  }
+  const draw = list => {
+    const when = t => new Date(t * 1000).toLocaleString();
+    $("pane").innerHTML = `
+      <div class="row" style="margin-top:14px"><b>Tunes in ${esc(state.voice)} (${list.length})</b>
+        ${list.length ? `<button class="danger" id="deltunes" disabled>Delete selected</button>` : ""}</div>
+      <div class="list">${list.length ? list.map(t => `
+        <div class="item"><input type="checkbox" data-tune="${esc(t.id)}" style="flex:0 0 auto">
+          <details style="flex:1 1 200px"><summary>${esc(t.final.slice(0, 90))}${t.final.length > 90 ? "…" : ""}</summary>
+            <div style="white-space:pre-wrap;margin-top:6px">${esc(t.final)}</div>${historyHtml(t.rounds)}</details>
+          <span class="muted">${t.rounds.filter(r => r.answered).length} round${t.rounds.filter(r => r.answered).length === 1 ? "" : "s"} · ${when(t.sealed)}</span></div>`).join("")
+        : `<div class="item muted">No tunes yet. Use <code>@MO tune</code>, or "Tune voice profile" under an output.</div>`}</div>`;
+    const checks = [...document.querySelectorAll("[data-tune]")];
+    checks.forEach(b => b.onchange = () => { $("deltunes").disabled = !checks.some(x => x.checked); });
+    const del = $("deltunes");
+    if (del) del.onclick = () => guarded(async () => {
+      const r = await call("delete_tunes", {ids: checks.filter(b => b.checked).map(b => b.dataset.tune)});
+      status(`<span class="ok">Deleted ${r.deleted.length} tune${r.deleted.length === 1 ? "" : "s"}.</span>`);
+      draw(r.tunes);
+    });
+  };
+  guarded(async () => draw((await call("list_tunes")).tunes));
+}
+
+// The decision tree so far: each round's A/B/C, what was picked, and what the user said.
+function historyHtml(rounds) {
+  if (!rounds || !rounds.length) return "";
+  return `<div class="history">${rounds.filter(r => r.answered || r.pick).map(r =>
+    `Round ${r.round}: ${["A", "B", "C"].map(k => k === r.pick ? `<b>${k} ✓</b>` : `${k} ✗`).join(" · ")}` +
+    (r.comment ? ` · “${esc(r.comment)}”` : "")).join("<br>")}</div>`;
+}
+
+// --- tuning: shared by the Output window's "Tune voice profile" and the @MO tune window.
+// The whole UI is here; ChatGPT only writes the A/B/C variants. Polls MO every 2 s; every click goes
+// over the direct line; when ChatGPT has variants to write, the window asks it on the user's behalf.
+function tuneUI(el, label) {
+  let timer = null, drawn = null, clicked = [];            // clicked: sentence indexes the user marked
+  const work = (id, what) => tellChatGPT(`${what} · continue MO tune ${id}`, true);
+  const act = (action, extra = {}, what = "clicked") => guarded(async () => {
+    const r = await call(action, extra);
+    if (r.work) await work(r.work, what);
+    drawn = null; tick();
+  });
+  function render(t) {
+    $("label").textContent = label;
+    $("voice").innerHTML = `<span class="muted">tuning</span> <span class="voice">${esc(t.profile)}</span>`;
+    const key_ = `${t.status}:${t.rounds.length}:${t.stalled}`;
+    if (drawn === key_) return;                              // don't wipe what the user is typing
+    drawn = key_;
+    const restart = t.status !== "sealed" ? `<button id="over" class="muted" style="font-size:12px">Start over</button>` : "";
+    const marked = () => t.target ? esc(t.source).replace(esc(t.target), `<span class="target">${esc(t.target)}</span>`) : esc(t.source);
+    let html = "";
+    if (t.status === "part") html = `
+      <div class="row" style="justify-content:center;margin:14px 0"><button class="primary" id="begin"
+        style="font-size:17px;padding:10px 28px">Begin Tuning</button></div>
+      <textarea id="note" style="min-height:60px" placeholder="Is there a particular sentence that bothers you? (optional) e.g. I don't like the word &quot;debauchery&quot;"></textarea>
+      <details style="margin-top:8px"><summary class="muted">or click the sentences to tune (optional)</summary>
+        <div class="final" id="sentences">${t.sentences.map((x, i) => `<span data-s="${i}" style="cursor:pointer">${esc(x)}</span>`).join("")}</div>
+      </details>`;
+    else if (t.status === "vary") html = `<div class="final">${marked()}</div>
+      <p class="muted">Writing ${t.rounds.length ? "variants of your pick" : "A, B, C"}…</p>` + (t.stalled
+      ? `<div class="row"><span class="muted">ChatGPT stopped.</span><button class="primary" id="cont">Continue?</button></div>` : "");
+    else if (t.status === "choose") {
+      const r = t.rounds[t.rounds.length - 1];
+      html = `<p class="muted">Round ${r.round}${t.rounds.length > 1 ? " · variants of your pick" : ""}: click the one you like best</p>
+        ${["A", "B", "C"].map(k => `<div class="variant"><button class="primary" data-pick="${k}"
+          style="font-size:16px;min-width:46px">${k}</button><span class="text">${esc(r.variants[k])}</span></div>`).join("")}
+        <textarea id="note" style="min-height:50px;margin-top:10px" placeholder="Anything to change next round? (optional) e.g. I don't like the word &quot;debauchery&quot;"></textarea>
+        <div class="row">${t.rounds.some(x => x.pick) ? `<button class="primary" id="done">✓ Done, keep my last pick</button>` : ""}
+          <button id="none">None of these</button></div>${historyHtml(t.rounds)}`;
+    } else if (t.status === "sealed") html = `
+      <p class="ok"><b>Tuned.</b> Saved to ${esc(t.profile)} after ${t.answered} round${t.answered === 1 ? "" : "s"};
+        future outputs in this voice learn from it.</p>
+      <div class="final">${esc(t.tuned || t.final)}</div>${historyHtml(t.rounds)}`;
+    el.innerHTML = html + (restart ? `<div class="row">${restart}</div>` : "");
+
+    const on = (id, fn) => { const b = el.querySelector(`#${id}`); if (b) b.onclick = fn; };
+    const note = () => el.querySelector("#note")?.value || "";
+    el.querySelectorAll("[data-s]").forEach(span => span.onclick = () => {   // mark a range: first..last click
+      const i = +span.dataset.s;
+      clicked = clicked.length === 1 ? [Math.min(clicked[0], i), Math.max(clicked[0], i)] : [i];
+      const [lo, hi] = clicked.length === 2 ? clicked : [clicked[0], clicked[0]];
+      el.querySelectorAll("[data-s]").forEach(x => x.classList.toggle("target", +x.dataset.s >= lo && +x.dataset.s <= hi));
+    });
+    on("begin", () => (floatWindow(), clicked.length)
+      ? act("tune_select", {first: clicked[0], last: clicked[clicked.length - 1], note: note()}, "Begin tuning")
+      : act("tune_choose_for_me", {note: note()}, "Begin tuning"));
+    el.querySelectorAll("[data-pick]").forEach(b => b.onclick = () =>
+      act("tune_choose", {pick: b.dataset.pick, comment: note(), final: false}, `Picked ${b.dataset.pick}`));
+    on("done", () => act("tune_done"));
+    on("none", () => act("tune_choose", {pick: null, comment: note(), final: false}, "None of these"));
+    on("cont", () => act("tune_continue", {}, "Continue"));
+    on("over", () => { clicked = []; act("tune_start_over"); });
+  }
+  // A newer window for this tune (the next round, drawn at the bottom) takes over: fold this one up.
+  function fold(t) {
+    clearTimeout(timer);
+    const picked = [...t.rounds].reverse().find(r => r.answered);
+    el.classList.add("folding");
+    setTimeout(() => {
+      el.classList.remove("folding");
+      el.innerHTML = `<div class="stub">${picked ? `Round ${picked.round} · picked ${picked.pick || "none"}` : "Tuning"} · continued below ↓</div>`;
+      $("voicectl") && ($("voicectl").innerHTML = "");
+      status("");
+    }, 450);
+  }
+  function show(t) {
+    if (t.window && t.window !== output.box && t.status !== "sealed") { fold(t); return false; }
+    render(t);
+    return true;
+  }
+  if (snapshot && snapshot.tune === output.tune) show(snapshot);   // draw instantly, then keep in sync
+  function tick() {
+    resilient(async () => {
+      const t = await call("tune_state");
+      if ($("status").textContent.startsWith("Can't reach MO")) status("");
+      if (!t.tune) return;
+      if (!show(t)) return;
+      clearTimeout(timer);
+      if (t.status !== "sealed") timer = setTimeout(tick, 2000);
+    }, tick);
+  }
+  tick();
+}
+
+// --- tune window (@MO tune): this chat's last output, or paste text to tune
+function tuneView() {
+  $("label").textContent = "MO · Tune";
+  if (output.tune) { tuneUI($("view"), "MO · Tune"); return; }
+  return guarded(async () => {
+    await refreshVoice();
+    if (!state.voice) {
+      $("view").innerHTML = `<p>No MO output in this chat yet, and no voice picked. Pick the voice for this chat with
+        <code>@MO config</code>, then <code>@MO tune</code> again.</p>`;
+      return;
+    }
+    $("view").innerHTML = `<p>No MO output in this chat yet. Paste some text to start tuning in <b>${esc(state.voice)}</b>:</p>
+      <textarea id="tunetext" placeholder="Paste here"></textarea>
+      <div class="row"><button class="primary" id="tunego">Start tuning</button></div>`;
+    $("tunego").onclick = () => guarded(async () => {
+      await call("tune_paste", {text: $("tunetext").value});
+      tuneUI($("view"), "MO · Tune");
+    });
+  });
+}
+
+// --- output window: one run, updating itself from MO (no ChatGPT step needed to show it).
+// Always the best version so far with "x% voice loaded" (AGENTS.md item 6). The result keeps a
+// read-only "in the voice of" label; changing the chat's voice below offers a rerun of the same
+// initial, which appears in this window too.
+function outputView() {
+  $("label").textContent = "MO · Output";
+  $("view").innerHTML = `<div id="run-main"></div><div id="voicectl"></div><div id="reruns"></div>`;
+  const voiceSelect = (selected, placeholder) => `<select id="voicepick">
+      ${selected ? "" : `<option value="" selected>${placeholder}</option>`}
+      ${state.profiles.map(n => `<option value="${esc(n)}" ${n === selected ? "selected" : ""}>${esc(n)}</option>`).join("")}
+    </select>`;
+  let mainProfile = null;
+
+  // One run's section: polls MO every 2 s until it's done.
+  function follow(el, runId, isMain) {
+    let timer = null;
+    const tick = () => resilient(async () => {
+      const r = await call("result", runId === output.run ? {} : {run: runId});
+      if ($("status").textContent.startsWith("Can't reach MO")) status("");
+      state = {voice: r.voice, profiles: r.profiles};
+      if (!r.profile) { if (isMain) askVoice(el); return; }          // waiting for the chat's voice
+      if (isMain && !mainProfile) { mainProfile = r.profile; drawVoiceControl(); }
+      if (isMain) $("voice").innerHTML = `<span class="muted">in the voice of</span> <span class="voice">${esc(r.profile)}</span>`;
+      const head = isMain ? "" : `<div class="muted" style="margin-top:12px">Rerun in <span class="voice">${esc(r.profile)}</span></div>`;
+      let line;
+      if (r.done) line = r.seeds ? `100% voice loaded · ${r.changed}% changed from ChatGPT's first draft`
+                                 : `No seeds in ${esc(r.profile)}, so this is ChatGPT's own text.`;
+      else if (r.stalled) line = `${r.voice_loaded}% voice loaded. <button class="primary" data-continue>Continue?</button>`;
+      else line = `Loading voice… ${r.voice_loaded}%`;
+      el.innerHTML = `${head}<div class="final">${esc(r.best)}</div><div class="muted" style="margin-top:6px">${line}</div>
+        ${r.done && isMain ? `<div class="row"><span class="muted">Not satisfied?</span>
+          <button class="primary" data-tune>Tune voice profile</button></div>` : ""}`;
+      const tuneBtn = el.querySelector("[data-tune]");
+      if (tuneBtn) tuneBtn.onclick = () => guarded(async () => {
+        await call("start_tune");
+        $("voicectl").innerHTML = ""; $("reruns").innerHTML = ""; status("");
+        tuneUI($("view"), "MO · Tune");
+      });
+      const cont = el.querySelector("[data-continue]");
+      if (cont) cont.onclick = () => guarded(async () => {
+        const go = await call("continue_clicked", runId === output.run ? {} : {run: runId});
+        cont.disabled = true; cont.textContent = "Continuing…";
+        await continueRun(go.continue, "Continue");
+      });
+      clearTimeout(timer);
+      if (!r.done) timer = setTimeout(tick, 2000);
+    }, () => tick());
+    tick();
+  }
+
+  // First output in a chat: ask for the voice, then let ChatGPT continue (the window posts the message).
+  function askVoice(el) {
+    if (el.dataset.asking) return;
+    el.dataset.asking = "1";
+    el.innerHTML = state.profiles.length
+      ? `<p><b>Select the voice for this chat.</b> It stays until you change it.</p>
+         <div class="row">${voiceSelect(null, "Pick a profile…")}<button class="primary" id="use" disabled>Use it</button></div>`
+      : `<p>No profiles yet. Create one with <code>@MO config</code>, then ask again.</p>`;
+    const pick = el.querySelector("#voicepick");
+    if (!pick) return;
+    pick.onchange = () => { el.querySelector("#use").disabled = !pick.value; };
+    el.querySelector("#use").onclick = () => guarded(async () => {
+      const done = await call("choose_voice", {name: pick.value});
+      delete el.dataset.asking;
+      el.innerHTML = `<p>Voice for this chat: <span class="voice">${esc(done.voice)}</span>. ChatGPT is continuing…</p>`;
+      await continueRun(done.continue, `Voice: ${done.voice}`);
+      follow(el, output.run, true);
+    });
+  }
+
+  // Below the result: change the chat's voice; offer a rerun of the same initial in the new one.
+  function drawVoiceControl() {
+    $("voicectl").innerHTML = `<div class="controls row"><span class="muted">Voice for this chat:</span>
+      ${voiceSelect(state.voice, "none")}<span id="rerunbox"></span></div>`;
+    const offerRerun = () => {
+      $("rerunbox").innerHTML = state.voice && state.voice !== mainProfile
+        ? `<button class="primary" id="rerun">Rerun this in ${esc(state.voice)}</button>` : "";
+      const b = $("rerun");
+      if (b) b.onclick = () => guarded(async () => {
+        const go = await call("rerun");
+        $("rerunbox").innerHTML = "";
+        const el = document.createElement("div");
+        $("reruns").appendChild(el);
+        await continueRun(go.continue, `Rerun in ${state.voice}`);
+        follow(el, go.continue, false);
+      });
+    };
+    $("voicepick").onchange = () => guarded(async () => {
+      const next = await call("set_voice", {name: $("voicepick").value});
+      state = {...state, ...next};
+      status(`<span class="ok">Voice for this chat: ${esc(state.voice)}. The result above stays in ${esc(mainProfile)}.</span>`);
+      offerRerun();
+    });
+    offerRerun();
+  }
+
+  follow($("run-main"), output.run, true);
+}
+
+const VIEWS = {help: helpView, config: configView, output: outputView, tune: tuneView};
 
 // ChatGPT globals (compatibility API)
 function fromOpenAI() { const o = window.openai; if (o) absorb(o.toolOutput, o.toolResponseMetadata); }

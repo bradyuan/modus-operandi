@@ -2,8 +2,8 @@
 
 **Long-Term Memory for AI.** Everything you read makes sense to you. Everything you write sounds like you.
 
-> **Status:** building [v1](docs/v1/DESIGN.md). `make setup` and `make run` work; in ChatGPT only
-> `@MO profiles` exists so far (step 1 of the build). The old prototype is under the `v0-prototype` git tag.
+> **Status:** building [v1](docs/v1/DESIGN.md). `make setup` and `make run` work; in ChatGPT,
+> Help, Config, Output, and Tune all work, with a voice per chat. The old prototype is under the `v0-prototype` git tag.
 
 ## Setup
 
@@ -35,16 +35,38 @@ Trace:               http://127.0.0.1:8000/trace                            ← 
 3. Already added before? Open **Settings → Apps → MO**, update the URL, and **Refresh**.
 4. Open a **new chat** and type `@MO`.
 
+### Hosted: one fixed link (Fly.io)
+
+So the ChatGPT link never changes and old MO windows keep working:
+
+```bash
+fly auth login                        # once (a free Fly.io account; it asks for a card)
+make setup-host APP=<a-unique-name>   # once: creates the app and a 1 GB disk for MO's data
+make deploy                           # every change: ships the code; link and data stay the same
+make link                             # prints the private link: add it in ChatGPT once
+make trace                            # then open http://127.0.0.1:8000/trace (private tunnel to the server)
+make logs
+```
+
+`make run` still works for quick local experiments (a separate, temporary link).
+
 ## Use
 
-| Command | What you do | What happens |
-|---|---|---|
-| **`@MO profiles`** | List, create, or delete profiles | One profile per purpose: an AI tutor, an essay writer, a journal |
-| **`@MO seed`** | Paste a perfect example into the MO box: your writing, or an excerpt you want to sound like | Stored exactly as given |
-| **`@MO tune`** | Pick between A / B / C until it's right; say why when it isn't | The whole back-and-forth is stored as one example |
-| **`@MO`** | Ask for anything: explain this paper, write this cover letter | ChatGPT drafts, then reworks it against your seeds and tunes until it has used all of them; the result appears in the MO box |
+Three MO windows, each opened by a command:
 
-Every MO box shows which profile it's using. Click in the box; typed answers in the chat don't count.
+| You type | Window |
+|---|---|
+| **`@MO` + anything** | **Output**: ChatGPT's answer reworked against your seeds, labeled with the voice it was written in. Attach files or paste text and links in the chat as usual. |
+| **`@MO`** · `@MO config` · `@MO profile` · `@MO seed` | **Config**: Profiles (create, delete, *Use in this chat*) and Seeds |
+| **`@MO help`** | **Help** |
+| **`@MO tune`** · or **Tune voice profile** under an output | **Tune**: say what part you didn't like (or skip), pick between A / B / C with comments until you confirm; it goes into the voice |
+
+- **Voice for this chat:** each chat has its own voice (a profile). Only you set it, in an MO
+  window in that chat (Config, the Output window, or when a chat's first output asks), and it
+  stays until you change it. Nothing carries over between chats.
+- **Seeds:** perfect examples (yours, or anyone's), pasted into the Seeds tab, saved exactly as
+  plain text into this chat's voice. Check seeds to delete them.
+- Only what you click or type **in an MO window** counts; typed answers in the chat aren't recorded.
 
 ## Check what happened
 

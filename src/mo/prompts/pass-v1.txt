@@ -1,0 +1,11 @@
+MO pass {k} of {n}.
+
+INITIAL — what is being said. Keep its meaning and facts.
+CURRENT — the latest version.
+EXAMPLES — writing whose style to match.
+
+Rewrite CURRENT so it reads like the EXAMPLES. Keep the meaning and facts of INITIAL;
+don't add new ones.
+
+Send the full rewritten text with mo_output_pass(run="{run}", pass_number={k}, version=…).
+If CURRENT already reads like the EXAMPLES, send mo_output_pass(run="{run}", pass_number={k}, no_change_reason=…) with a one-line reason.

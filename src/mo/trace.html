@@ -31,6 +31,17 @@
   .actor { font-weight: 700; white-space: nowrap; }
   .HUMAN { color: var(--human); } .CHATGPT { color: var(--chatgpt); } .MO { color: var(--mo); } .DEV { color: var(--dev); }
   .refused td { color: var(--bad); }
+  .store { background: var(--card); border: 1px solid var(--line); border-radius: 10px; margin-top: 12px; padding: 4px 14px; }
+  .store h2 { font-size: 14px; margin: 10px 0 6px; }
+  .seed { border-top: 1px solid var(--line); padding: 8px 0; }
+  .seed summary { cursor: pointer; }
+  ins { background: color-mix(in srgb, var(--human) 18%, transparent); text-decoration: none; border-radius: 3px; }
+  del { background: color-mix(in srgb, var(--bad) 18%, transparent); border-radius: 3px; }
+  .claim { color: var(--chatgpt); }
+  .pass { border-top: 1px dashed var(--line); margin-top: 10px; padding-top: 6px; }
+  .pass h3 { font-size: 13px; margin: 4px 0; }
+  .pass .label { font-size: 12px; color: var(--muted); margin-top: 6px; }
+  .seed .text { white-space: pre-wrap; margin-top: 6px; font: 14px/1.6 ui-serif, Georgia, serif; }
   code { font-size: 12px; }
 </style>
 </head>
@@ -42,6 +53,7 @@
   <nav id="tabs"></nav>
   <div class="filters" id="filters"></div>
   <div class="summary" id="summary"></div>
+  <div id="store"></div>
   <div class="wrap"><table>
     <thead><tr><th>time</th><th>actor</th><th>event</th><th>details</th></tr></thead>
     <tbody id="rows"></tbody>
@@ -58,14 +70,75 @@ const state = {
   actors: new Set(params.get("actor") ? params.get("actor").split(",") : ACTORS),
   refusalsOnly: params.get("refusals") === "1",
 };
-let all = [], profiles = [];
+let all = [], profiles = [], detail = null;
 
-function saveUrl() {
-  const p = new URLSearchParams();
-  if (state.tab !== "all") p.set("profile", state.tab);
-  if (state.actors.size !== ACTORS.length) p.set("actor", [...state.actors].join(","));
-  if (state.refusalsOnly) p.set("refusals", "1");
-  history.replaceState(null, "", p.toString() ? `?${p}` : location.pathname);
+// Word-level diff (LCS), shown with <ins>/<del>. Drafts are short, so O(n*m) is fine.
+function diff(a, b) {
+  const x = a.split(/(\s+)/), y = b.split(/(\s+)/), n = x.length, m = y.length;
+  const dp = Array.from({length: n + 1}, () => new Uint32Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+    dp[i][j] = x[i] === y[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  let i = 0, j = 0, out = "";
+  while (i < n && j < m) {
+    if (x[i] === y[j]) { out += esc(x[i]); i++; j++; }
+    else if (dp[i + 1][j] >= dp[i][j + 1]) out += `<del>${esc(x[i++])}</del>`;
+    else out += `<ins>${esc(y[j++])}</ins>`;
+  }
+  while (i < n) out += `<del>${esc(x[i++])}</del>`;
+  while (j < m) out += `<ins>${esc(y[j++])}</ins>`;
+  return out;
+}
+
+function tuneHtml(t, open) {
+  // A tune's whole decision tree: what the user said, the part, every round (A/B/C, pick, comment,
+  // and what MO sent), and the final.
+  const rounds = t.rounds.map(r => `<div class="pass"><h3>Round ${r.round} · picked ${r.pick || "none"}${r.final ? " · confirmed" : ""}</h3>
+      ${["A", "B", "C"].map(k => `<div class="label">${k}${k === r.pick ? " ✓" : ""}</div><div class="text">${esc(r.variants[k])}</div>`).join("")}
+      ${r.comment ? `<div class="label">The user said</div><div class="text">${esc(r.comment)}</div>` : ""}
+      <details data-id="${esc(t.id)}-r${r.round}" ${open.has(`${t.id}-r${r.round}`) ? "open" : ""}><summary>MO sent</summary>
+        <div class="text">${esc((t.sent || {})[String(r.round)] || "(not recorded)")}</div></details></div>`).join("");
+  return `<div class="seed"><details data-id="${esc(t.id)}" ${open.has(t.id) ? "open" : ""}>
+    <summary>${esc((t.final || t.target || t.source.text).slice(0, 100))}…
+      <span class="muted"> · ${t.status} · ${t.rounds.length} round${t.rounds.length === 1 ? "" : "s"} · ${t.how || "not started"}
+      · ${new Date(t.started * 1000).toLocaleString()} · ${esc(t.id)}</span></summary>
+    ${t.descriptions.length ? `<h2>What the user said</h2>${t.descriptions.map(d => `<div class="text">${esc(d)}</div>`).join("")}` : ""}
+    ${t.target ? `<h2>The part</h2><div class="text">${esc(t.target)}</div>` : ""}
+    ${t.final ? `<h2>Final</h2><div class="text">${esc(t.final)}</div>` : ""}
+    <h2>Rounds</h2>${rounds || `<div class="muted">No rounds yet.</div>`}</details></div>`;
+}
+
+function runHtml(r, open) {
+  // Top to bottom: diff (initial → final), final, initial, then every pass explicitly:
+  // what MO sent, what ChatGPT returned, and the diff against the previous version.
+  const versions = [r.initial];
+  const passes = r.passes.map(p => {
+    const before = versions[versions.length - 1];
+    const returned = p.version !== undefined;
+    if (returned) versions.push(p.version);
+    const sent = (r.sent || {})[String(p.pass)];
+    const id = `${r.id}-p${p.pass}`;
+    return `<div class="pass"><h3>Pass ${p.pass} of ${r.batches.length} · ${returned ? `${p.changed}% changed` : "no change"}
+        · ${p.kind === "tunes" ? "tunes" : "seeds"} ${esc(p.seeds.join(", "))} · ${new Date(p.at * 1000).toLocaleTimeString()}</h3>
+      <details data-id="${id}-sent" ${open.has(`${id}-sent`) ? "open" : ""}><summary>MO sent</summary>
+        <div class="text">${sent ? esc(sent) : `<span class="muted">(not recorded for this run)</span>`}</div></details>
+      <div class="label">ChatGPT returned</div>
+      ${returned ? `<div class="text">${esc(p.version)}</div>`
+                 : `<div class="text claim">No change. CHATGPT claim: ${esc(p.no_change)}</div>`}
+      ${returned ? `<details data-id="${id}-diff" ${open.has(`${id}-diff`) ? "open" : ""}><summary>Diff vs the previous version</summary>
+        <div class="text">${diff(before, p.version)}</div></details>` : ""}</div>`;
+  }).join("");
+  const final = versions[versions.length - 1];
+  const done = r.profile && r.passes.length === r.batches.length;
+  const stalled = r.profile && !done && Date.now() / 1000 - (r.active || r.started) > 90;   // runs.STALL_SECONDS
+  return `<div class="seed"><details data-id="${esc(r.id)}" ${open.has(r.id) ? "open" : ""}>
+    <summary><span class="claim">${esc(r.request || "(no request given)")}</span>
+      <span class="muted"> · ${new Date(r.started * 1000).toLocaleString()} · ${r.passes.length}/${r.batches.length} passes
+      · ${done ? "done" : stalled ? `<span style="color:var(--bad)">stalled</span>` : r.profile ? "in progress" : "waiting for a voice"}
+      · ${esc(r.prompt)} · ${esc(r.id)}</span></summary>
+    <h2>Diff: initial → final</h2><div class="text">${diff(r.initial, final)}</div>
+    <h2>Final</h2><div class="text">${esc(final)}</div>
+    <h2>Initial <span class="muted">(ChatGPT's first answer)</span></h2><div class="text">${esc(r.initial)}</div>
+    <h2>Every pass</h2>${passes || `<div class="muted">No passes (no seeds).</div>`}</details></div>`;
 }
 
 function inTab(e) {
@@ -97,6 +170,20 @@ function render() {
     ? `${p.name} · ${p.seeds} seeds · ${p.tunes} tunes · ${tabEvents.length} events · ${refusals} refusals`
     : `${state.tab === "all" ? `All · ${profiles.length} profiles` : "No profile"} · ${tabEvents.length} events · ${refusals} refusals`;
 
+  const store = document.getElementById("store");
+  if (p && detail && detail.name === p.name) {
+    const open = new Set([...store.querySelectorAll("details[open]")].map(d => d.dataset.id));  // survive refresh
+    store.innerHTML = `<div class="store"><h2>Seeds (${detail.seeds.length})</h2>${detail.seeds.length ? detail.seeds.map(sd => `
+      <div class="seed"><details data-id="${esc(sd.id)}" ${open.has(sd.id) ? "open" : ""}>
+        <summary>${esc(sd.text.slice(0, 120))}${sd.text.length > 120 ? "…" : ""}
+          <span class="muted"> · ${sd.words} words · ${new Date(sd.added * 1000).toLocaleString()} · ${esc(sd.id)}</span></summary>
+        <div class="text">${esc(sd.text)}</div></details></div>`).join("") : `<div class="muted seed">No seeds.</div>`}</div>
+      <div class="store"><h2>Tunes (${(detail.tunes || []).length})</h2>${(detail.tunes || []).length
+        ? detail.tunes.map(t => tuneHtml(t, open)).join("") : `<div class="muted seed">No tunes yet.</div>`}</div>
+      <div class="store"><h2>Output runs (${detail.runs.length})</h2>${detail.runs.length
+        ? detail.runs.map(r => runHtml(r, open)).join("") : `<div class="muted seed">No runs yet.</div>`}</div>`;
+  } else store.innerHTML = "";
+
   const shown = tabEvents.filter(e => state.actors.has(e.actor) && (!state.refusalsOnly || e.type === "refused")).reverse();
   document.getElementById("rows").innerHTML = shown.length ? shown.map(e => {
     const {at, actor, type, ...rest} = e;
@@ -106,13 +193,14 @@ function render() {
   }).join("") : `<tr><td colspan="4" class="muted">No events here yet.</td></tr>`;
 }
 
-function update() { saveUrl(); render(); }
+function update() { saveUrl(); render(); load(); }
 
 async function load() {
   const json = url => fetch(url).then(r => r.ok ? r.json() : null).catch(() => null);
   const [ev, pr] = await Promise.all([json("/trace/events"), json("/trace/profiles")]);
   all = ev || all;
   profiles = pr || profiles;
+  detail = profiles.some(p => p.name === state.tab) ? await json(`/trace/profiles/${encodeURIComponent(state.tab)}`) : null;
   render();
 }
 load();

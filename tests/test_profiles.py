@@ -3,13 +3,13 @@ from mo import events, profiles
 
 
 def profiles_box(server, client):
-    box, key, _ = open_box(server, "mo_profiles")
+    box, key, _ = open_box(server, "mo_config")
     return lambda action, **data: box_call(client, box, key, action, **data)
 
 
 def test_create_list_and_names_are_normalized(server, client):
     act = profiles_box(server, client)
-    assert act("list").json() == {"profiles": []}
+    assert act("list").json() == {"profiles": [], "voice": None}
     r = act("create", name="  ELI5 ")
     assert r.status_code == 200 and r.json()["created"]["name"] == "eli5"
     assert [p["name"] for p in act("list").json()["profiles"]] == ["eli5"]

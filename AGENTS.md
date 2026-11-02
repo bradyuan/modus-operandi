@@ -22,7 +22,9 @@ Goal: cut ~2h of reading/synthesis and ~2h of writing down to minutes each.
 
 1. **ChatGPT produces content. MO keeps the books. The user does all evaluation.** MO runs no
    checks, interprets no text, and makes no AI calls.
-2. **Commands:** `@MO` (output), `@MO tune`, `@MO seed`, `@MO profiles`.
+2. **Commands:** `@MO` + anything (output), `@MO help`, `@MO config` (also plain `@MO` and
+   `@MO profile`), `@MO seed`, `@MO tune` (also "Tune voice profile" under an output). Windows:
+   Help, Config, Output, Tune.
 3. **User input goes only through the MO box**, straight to MO, signed with a per-box key ChatGPT
    can't see. ChatGPT has no tools that record evaluations or manage profiles. Typed answers in
    the chat don't count.
@@ -31,27 +33,41 @@ Goal: cut ~2h of reading/synthesis and ~2h of writing down to minutes each.
    No compaction.
 5. **Seeding:** the user pastes a perfect example into the MO box; stored verbatim. Seeds from other
    authors are allowed, stay private, and are never committed or shipped.
-6. **Output:** seeds first, then tune boxes ranked by rounds (most first), in passes of 3, 10, 30, …
-   Each pass gets the initial response, the current version, and its batch. The result appears in
-   the MO box only after the last pass.
-7. **Profiles:** no global active profile. Each box carries its profile, shown as a large label.
-   Unknown or stale box IDs → ask. A wrong profile must be impossible.
+6. **Output:** seeds first, then tune boxes ranked by rounds (most first), in passes of 1, 3, 10, 30, …
+   Each pass gets the initial response, the current version, and its batch. The MO window always
+   shows the best version so far (availability over consistency) with "x% voice loaded" (the share
+   of the voice's seed words already passed through). Below 100%, a stalled run offers
+   "Continue?"; continuing is the user's click, and MO never retries on its own. At 100%, the
+   window offers "Not satisfied? Tune voice profile". A partial result can never look complete.
+7. **Voice per chat:** each chat has one current profile, its voice, keyed by the user and the chat
+   ID that ChatGPT's app attaches to every call (never relayed by the model). It is used for output and is
+   the profile Config works on. Only the HUMAN USER sets it, in an MO box in that chat: Config's
+   Profiles tab, the Output window, or the prompt on a chat's first output. It stays fixed until
+   they change it. Nothing is inherited from other chats. Each result is labeled with the voice it
+   was written in.
 8. **Deterministic where MO acts, visible where ChatGPT acts.** MO guarantees its state, the order
    of steps, and visibility of gaps, not the quality of ChatGPT's writing. The user's picks are the gate.
 9. **Observability:** an append-only event log tagging every event HUMAN USER / CHATGPT / MO / DEV;
-   OpenTelemetry traces with IDs and counts only; deterministic alarms; a local trace page.
+   OpenTelemetry traces with IDs and counts only; deterministic alarms. The trace is a private
+   operator tool: users see only their own seeds and tunes; the operator sees their own full trace
+   and anonymous metrics (no text, no profile names) for everyone else.
 10. **Private by design.** Store the minimum; data is exportable and deletable. Development runs
     locally (tunnel); the product is hosted.
 11. **Evals:** the user's picks are the only ground truth. North-star metric: rounds until ✓,
     falling over time. No LLM judge and no MO checks.
+12. **Users:** 1 global → N users → N profiles each, for data and trace alike. Sign-in is OAuth 2.1
+    (WorkOS AuthKit) through ChatGPT's "Connect"; every call is scoped to the token's user, and each
+    MO window is bound to the user of the call that opened it. A user never sees another user's data.
+    Deleting an account takes two clicks, is permanent, and wipes that user's folder. Each user may
+    store up to 50 MB.
 
 ## Tentative (not yet decided)
 
-- Hosting provider; packaging as a ChatGPT plugin
-- Removing single boxes or seeds; whether deleting a profile is permanent
+- Packaging as a ChatGPT plugin
 
-**Decided stack:** Python + MCP SDK, ChatGPT Apps SDK (the MO box), Docker, GitHub Actions CI,
-OpenTelemetry. Postgres once hosted. No vector database.
+**Decided stack:** Python + MCP SDK, ChatGPT Apps SDK (the MO box), Docker, Fly.io (one machine and
+a volume: centralized compute and storage as JSON files per user), WorkOS AuthKit (OAuth 2.1),
+GitHub Actions CI, OpenTelemetry. Postgres only when needed. No vector database.
 
 ## Where things live
 

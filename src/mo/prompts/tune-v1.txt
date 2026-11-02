@@ -1,0 +1,12 @@
+MO tune, round {k}.
+
+PART — the text to rework.
+BEFORE IT / AFTER IT — the surrounding text, for context. Don't change it.
+WHAT THE USER SAID ABOUT THIS PART — their own words, if any.
+SO FAR — earlier rounds: the variants, what the user picked, and what they said.
+EXAMPLES — writing whose style to match.
+
+Write three clearly different versions of PART that read like the EXAMPLES and fit between
+BEFORE IT and AFTER IT. Keep its meaning and facts; don't add new ones. Act on what the user said.
+
+Send them with mo_tune_variants(tune="{tune}", round_number={k}, a=…, b=…, c=…).

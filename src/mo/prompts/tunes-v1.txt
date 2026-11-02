@@ -1,0 +1,12 @@
+MO pass {k} of {n}: tuned parts.
+
+INITIAL — what is being said. Keep its meaning and facts.
+CURRENT — the latest version.
+TUNED — parts the user reworked until they were right, with what they said along the way (NOTES)
+and versions they turned down (REJECTED).
+
+Rewrite CURRENT so it reads like TUNED and unlike REJECTED, acting on the NOTES. Keep the meaning
+and facts of INITIAL; don't add new ones.
+
+Send the full rewritten text with mo_output_pass(run="{run}", pass_number={k}, version=…).
+If CURRENT already reads like TUNED, send mo_output_pass(run="{run}", pass_number={k}, no_change_reason=…) with a one-line reason.
