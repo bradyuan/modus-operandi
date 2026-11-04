@@ -242,3 +242,70 @@ entry here says why, and v2 begins.
 - Next: a spike that ChatGPT's "Connect" completes with WorkOS against the hosted MO (the MCP spec is
   moving from dynamic client registration to client ID metadata documents), then user folders,
   per-call scoping, account deletion, the operator view, the 50 MB cap, then deploy.
+
+## 2026-11-02 — Approved: hosted only, sign-in, trace per user (AGENTS.md items 2, 9, 10)
+
+- **MO runs only hosted** (Fly.io), reached through ChatGPT. No local mode: the tunnel, `make run`,
+  and the link secret go away; sign-in is the lock, so the MCP address can be public.
+- **Anyone can sign up**, one click: Google, Microsoft, Apple (Apple needs a paid developer
+  account; added last). No email codes; GitHub maybe later. MO stores only the WorkOS user ID.
+- Data: **data → users → profiles**, each 1 → N. A user's folder holds everything they own.
+- **Trace per user:** each user sees their own full trace (`@MO trace` window, or the trace page
+  with the same sign-in). **Admins** (verified emails, kept in a Fly secret, not the repo) see every
+  user's full data and trace, read-only. Users aren't notified. Banning: not in the MVP.
+- Plan: [HOSTING.md](HOSTING.md). WorkOS client ID, API key, and admin list are Fly secrets.
+- AGENTS.md Scope → Phase: finishing v1, hosted on Fly.io with WorkOS sign-in (approved).
+
+## 2026-11-02 — Steps 1–2: sign-in works; full MO back, per user
+
+- Sign-in spike: ChatGPT's Connect completed with WorkOS AuthKit (Dynamic Client Registration on);
+  MO saw 401 → sign-in → 200. Mistake: the spike replaced the whole hosted MO with one tool, and the
+  human user found every command gone. Next time say plainly what a deploy removes.
+- Step 2 deployed: every MCP call needs a WorkOS token; MO's store is `/data/users/<id>/`;
+  `mo_home()` takes the user from the token (always first) or, for a window's click, from
+  `box-owners/<box>`; no user → refused, never a shared fallback. `mo_whoami` stays.
+- Removed: the tunnel (`mo.dev`), `make run`/`link`/`trace`, the link secret. The trace page is off
+  when hosted until step 3 (signed-in, per user).
+
+## 2026-11-03 — Step 3: the trace, per user (built, waiting on the human user's test)
+
+- `/trace`: signed out → a sign-in page; "Sign in" → WorkOS (same account as ChatGPT) →
+  `/trace/callback` → MO trades the code for the user at WorkOS and sets its own signed cookie
+  (user ID + expiry, 7 days, `MO_SESSION_SECRET`). Every data route reads only the signed-in user's
+  folder; admins may add `?user=<id>`, and get `/trace/users` (IDs and counts) and a picker. Read-only.
+- `@MO trace` opens a Trace window: this chat's last 15 events (ids and counts) and "Open full trace".
+- Fixed on the way: the trace page called a missing `saveUrl()`, so tabs and filters errored.
+- Not yet: alarms and OpenTelemetry (AGENTS.md item 9).
+- `@MO debug` added as another name for `@MO trace` (AGENTS.md item 2, approved).
+
+## 2026-11-03 — Window design: Swiss, quiet
+
+- Direction (the human user's): Swiss / International Typographic Style; Rams, Jobs, Tufte; one Warhol
+  signature in the branding, not everywhere. Personality: intelligent, precise, understated,
+  authoritative, elegant. "Make the AI's complexity invisible until the user needs to inspect it.
+  Then make that complexity perfectly legible."
+- Applied to the MO windows: one grotesque (Helvetica Neue), small uppercase set labels, hairline
+  rules, square controls, ink on paper. Red only in MO's mark (the signature: a small red square
+  before the window name) and in warnings and confirmations. Secondary and destructive actions are
+  quiet text until pointed at. The output shows the result and one line of facts; "How MO got here"
+  folds open to a table (voice, passes, voice loaded, % changed, Open full trace).
+- Not yet restyled: the trace page and its sign-in page.
+- **Rolled back the same day:** the human user found the restyled windows worse. The windows are back
+  to their earlier look (the trace window and `@MO debug` stay). Next time: show screenshots and get a
+  yes before deploying a visual change.
+- Fixed: after a deploy ChatGPT asked for the old window address (`ui://mo/box-38ebf9b1.html`) and got "Unknown resource", so `@MO tune` showed no window. MO now answers any `ui://mo/box-*.html` with the current window.
+
+## 2026-11-03 — Stuck tunes, Retry, and only the newest window is interactive
+
+- Observed: after Begin Tuning, the window's "continue MO tune …" message never reached the chat, so
+  ChatGPT never wrote A/B/C and the window said "Writing A, B, C…" with no way forward. MO couldn't
+  see why: posting into the chat happens between the window and ChatGPT only.
+- Now: the window reports each message to MO (`followup_sent` / `followup_failed`, actor MO,
+  reported_by window). If ChatGPT hasn't asked MO for the work 20 s after the user's click (90 s once
+  it has started), the window shows "ChatGPT didn't pick this up" with **Retry** (the user's click;
+  MO still never retries on its own) and the exact message to copy into the chat.
+- Approved: **only the chat's newest MO window is interactive.** MO records each chat's newest
+  window; clicks from older ones are refused (409) and logged; reading still works, and older
+  windows grey out with "A newer MO window is open below."
+- Tune rounds now show what's being varied above A/B/C: "The part you're tuning", then "Your pick
+  from round N (X)".

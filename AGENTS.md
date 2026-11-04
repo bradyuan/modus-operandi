@@ -15,16 +15,16 @@ Goal: cut ~2h of reading/synthesis and ~2h of writing down to minutes each.
 ## Scope
 
 - **In scope:** shaping AI output (explanations and writing). Nothing else.
-- **Phase:** building v1 (`docs/v1/DESIGN.md`): local MCP server plus the MO box,
-  behind a cloudflared tunnel, connected manually in ChatGPT developer mode.
+- **Phase:** finishing v1 (`docs/v1/DESIGN.md`, `docs/v1/HOSTING.md`): MO hosted on Fly.io
+  for many users, with WorkOS sign-in, connected in ChatGPT developer mode.
 
 ## Core design
 
 1. **ChatGPT produces content. MO keeps the books. The user does all evaluation.** MO runs no
    checks, interprets no text, and makes no AI calls.
 2. **Commands:** `@MO` + anything (output), `@MO help`, `@MO config` (also plain `@MO` and
-   `@MO profile`), `@MO seed`, `@MO tune` (also "Tune voice profile" under an output). Windows:
-   Help, Config, Output, Tune.
+   `@MO profile`), `@MO seed`, `@MO tune` (also "Tune voice profile" under an output),
+   `@MO trace` (also `@MO debug`). Windows: Help, Config, Output, Tune, Trace.
 3. **User input goes only through the MO box**, straight to MO, signed with a per-box key ChatGPT
    can't see. ChatGPT has no tools that record evaluations or manage profiles. Typed answers in
    the chat don't count.
@@ -48,11 +48,11 @@ Goal: cut ~2h of reading/synthesis and ~2h of writing down to minutes each.
 8. **Deterministic where MO acts, visible where ChatGPT acts.** MO guarantees its state, the order
    of steps, and visibility of gaps, not the quality of ChatGPT's writing. The user's picks are the gate.
 9. **Observability:** an append-only event log tagging every event HUMAN USER / CHATGPT / MO / DEV;
-   OpenTelemetry traces with IDs and counts only; deterministic alarms. The trace is a private
-   operator tool: users see only their own seeds and tunes; the operator sees their own full trace
-   and anonymous metrics (no text, no profile names) for everyone else.
-10. **Private by design.** Store the minimum; data is exportable and deletable. Development runs
-    locally (tunnel); the product is hosted.
+   OpenTelemetry traces with IDs and counts only; deterministic alarms. Each user sees their own
+   full trace (`@MO trace` or the trace page, same sign-in as ChatGPT). Admins (verified emails,
+   kept outside the repo) see every user's full data and trace, read-only.
+10. **Private by design.** Store the minimum; data is exportable and deletable. MO runs only
+    hosted, reached through ChatGPT; there is no local mode.
 11. **Evals:** the user's picks are the only ground truth. North-star metric: rounds until ✓,
     falling over time. No LLM judge and no MO checks.
 12. **Users:** 1 global → N users → N profiles each, for data and trace alike. Sign-in is OAuth 2.1
