@@ -5,9 +5,11 @@
 ## Why MO
 
 AI explanations are generic: they don't know which analogies click for you or how deep to go. AI
-writing drifts toward AI voice, and long pieces lose yours. Both are the same problem: **the model
-doesn't keep what you've taught it, and nothing makes it use what it has.** Prompting ("write like
-me") relies on the model following instructions — the thing it does least reliably.
+writing drifts toward AI voice, and long pieces lose yours.
+
+Both come from the same problem: **what you teach the model doesn't stick. As the prompts change,
+its answers drift away from your preferences, and nothing checks that it still follows them.**
+Another reminder only adds another prompt.
 
 ### The idea
 
@@ -64,12 +66,8 @@ makes ChatGPT work through all of it, in order, before you see an answer.
 
 ## Observability
 
-Every state change is an event in an append-only log, tagged with who caused it:
-**HUMAN USER** (a signed click in an MO window), **CHATGPT** (a tool call), or **MO** (its own code,
-including every refusal). "Did ChatGPT touch my evaluations?" is answered by filtering one column.
-
-The trace page (`/trace`, same sign-in as ChatGPT) shows your events, each output's first draft vs.
-final with a word diff per pass, and every tune's rounds. Read-only.
+**[modus-operandi-v1.fly.dev/trace](https://modus-operandi-v1.fly.dev/trace)**: sign in with the same
+account you use in ChatGPT. Or type `@MO trace` in a chat.
 
 ## Architecture
 
