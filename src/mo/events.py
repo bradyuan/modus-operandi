@@ -10,9 +10,13 @@ Every event names exactly one actor (DESIGN §2):
 
 from __future__ import annotations
 
+import contextvars
 import json
 import os
+import re
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -20,12 +24,52 @@ HUMAN_USER, CHATGPT, MO, DEV = "HUMAN USER", "CHATGPT", "MO", "DEV"
 ACTORS = (HUMAN_USER, CHATGPT, MO, DEV)
 
 
-def mo_home() -> Path:
+class NoUser(RuntimeError):
+    """MO was asked for user data with no user to scope it to. Never falls back to shared storage."""
+
+
+_USER_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_user: contextvars.ContextVar[str | None] = contextvars.ContextVar("mo_user", default=None)
+
+
+def data_root() -> Path:
+    """MO's whole store: /data when hosted (HOSTING.md §3)."""
     return Path(os.environ.get("MO_HOME", Path.home() / ".mo"))
 
 
+def current_user() -> str | None:
+    """The user this request acts for: set explicitly (a window's owner), or the sign-in token's
+    subject on a ChatGPT tool call. Never anything ChatGPT says."""
+    from mcp.server.auth.middleware.auth_context import get_access_token
+    token = get_access_token()
+    if token is not None:  # a signed-in call: the token decides, nothing else
+        return token.subject or None
+    return _user.get()
+
+
+@contextmanager
+def as_user(user: str) -> Iterator[None]:
+    """Act for `user` (e.g. the owner of the window that sent a click)."""
+    reset = _user.set(user)
+    try:
+        yield
+    finally:
+        _user.reset(reset)
+
+
+def mo_home() -> Path:
+    """The current user's folder: data → users → <user id>. No user → NoUser, never a default."""
+    user = current_user()
+    if not user or not _USER_ID.match(user):
+        raise NoUser("no signed-in user for this request")
+    return data_root() / "users" / user
+
+
 def _path() -> Path:
-    return mo_home() / "events.jsonl"
+    try:
+        return mo_home() / "events.jsonl"
+    except NoUser:
+        return data_root() / "mo-events.jsonl"  # MO-wide events with no user (e.g. refusals); no text
 
 
 def record(actor: str, type: str, **data: Any) -> dict[str, Any]:

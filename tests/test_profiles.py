@@ -1,4 +1,4 @@
-from conftest import box_call, open_box
+from conftest import box_call, open_box, sign_in
 from mo import events, profiles
 
 
@@ -9,7 +9,7 @@ def profiles_box(server, client):
 
 def test_create_list_and_names_are_normalized(server, client):
     act = profiles_box(server, client)
-    assert act("list").json() == {"profiles": [], "voice": None}
+    assert act("list").json() == {"profiles": [], "voice": None, "stale": False}
     r = act("create", name="  ELI5 ")
     assert r.status_code == 200 and r.json()["created"]["name"] == "eli5"
     assert [p["name"] for p in act("list").json()["profiles"]] == ["eli5"]
@@ -77,10 +77,13 @@ def test_delete_purges_the_profiles_events_and_leaves_one_tombstone(server, clie
 def test_trace_filters_by_profile(server, client):
     act = profiles_box(server, client)
     act("create", name="a")
-    local = {"host": "127.0.0.1:8000"}
+    sign_in(client)
+    local = {}
     by_a = client.get("/trace/events?profile=a", headers=local).json()
     assert [e["type"] for e in by_a] == ["profile_created"]
     none = client.get("/trace/events?profile=none", headers=local).json()
     assert [e["type"] for e in none] == ["tool_call"]               # opening the box belongs to no profile
     assert [p["name"] for p in client.get("/trace/profiles", headers=local).json()] == ["a"]
-    assert client.get("/trace/profiles", headers={"host": "abc.trycloudflare.com"}).status_code == 404
+    sign_in(client, "user_other")                                   # someone else can't read it
+    assert client.get("/trace/profiles?user=user_test").status_code == 403
+    assert client.get("/trace/profiles").json() == []

@@ -15,6 +15,11 @@ def window_of(chat, result):
     return lambda action, **data: box_call(chat.client, box, key, action, **data)
 
 
+def variants(chat, **round_):
+    """ChatGPT writes a round's A/B/C; MO draws them in a new window, the one the user acts in next."""
+    return window_of(chat, chat.call("mo_tune_variants", **round_))
+
+
 def finished_output(chat, seeds=("To be, or not to be.",)):
     """A chat with a voice and one finished output; returns the Output window."""
     win = chat.box("mo_config")
@@ -41,15 +46,15 @@ def test_tune_from_an_output_click_by_click(chats):
     vary = a.text("mo_tune_work", tune=tune_id)                          # ChatGPT's only job: variants
     assert "round 1" in vary and "I don't like the word fabric" in vary and "To be, or not to be." in vary
     assert "must differ" in a.error("mo_tune_variants", tune=tune_id, round_number=1, a="x", b="x", c="y")
-    a.text("mo_tune_variants", tune=tune_id, round_number=1, a="A1", b="B1", c="C1")
+    out = variants(a, tune=tune_id, round_number=1, a="A1", b="B1", c="C1")
     assert out("tune_done").status_code == 400                           # nothing picked yet
     # Click C → round 2 varies C (with an optional note).
     out("tune_choose", pick="C", comment="less stiff", final=False)
     vary2 = a.text("mo_tune_work", tune=tune_id)
     assert "round 2" in vary2 and "C1" in vary2 and "less stiff" in vary2
-    a.text("mo_tune_variants", tune=tune_id, round_number=2, a="C1a", b="C1b", c="C1c")
+    out = variants(a, tune=tune_id, round_number=2, a="C1a", b="C1b", c="C1c")
     out("tune_choose", pick="B", final=False)                            # click B → round 3 varies B …
-    a.text("mo_tune_variants", tune=tune_id, round_number=3, a="x1", b="x2", c="x3")
+    out = variants(a, tune=tune_id, round_number=3, a="x1", b="x2", c="x3")
     sealed = out("tune_done").json()                                     # … Done keeps the last pick (C1b)
     assert sealed["status"] == "sealed" and sealed["final"] == "C1b"
     assert sealed["tuned"] == SOURCE.replace("Within its quiet hours, the flesh repairs its fabric. "
@@ -70,7 +75,7 @@ def test_begin_tuning_without_clicks_lets_mo_choose_and_none_needs_no_note(chats
     state = out("tune_state").json()
     assert state["target"] == "Sleep lends its strength to learning. It bids remembrance hold. It steadies the passions."
     assert (state["status"], state["how"]) == ("vary", "chosen by MO")
-    a.text("mo_tune_variants", tune=tune_id, round_number=1, a="A1", b="B1", c="C1")
+    out = variants(a, tune=tune_id, round_number=1, a="A1", b="B1", c="C1")
     assert out("tune_choose", pick=None, comment="", final=False).status_code == 200   # None of these, no note
 
 
@@ -83,7 +88,7 @@ def test_reopening_resumes_the_unfinished_tune_or_starts_over(chats):
     assert resumed["resumed"] is True and resumed["tune"] == tune_id
     again = a.call("mo_tune")                                             # @MO tune resumes it too
     assert again["structuredContent"]["tune"] == tune_id
-    fresh = out("tune_start_over").json()
+    fresh = window_of(a, again)("tune_start_over").json()              # in the newest window
     assert fresh["tune"] != tune_id and fresh["status"] == "part"
     with pytest.raises(ValueError):
         tunes.find(tune_id)                                               # the unfinished one stored nothing
@@ -119,7 +124,7 @@ def test_output_hands_out_tunes_after_seeds_in_batches_of_1_3_10_30(chats):
     out, _ = finished_output(a)
     tune_id = out("start_tune").json()["tune"]
     out("tune_choose_for_me", note="less stiff")
-    a.text("mo_tune_variants", tune=tune_id, round_number=1, a="A1", b="B1", c="C1")
+    out = variants(a, tune=tune_id, round_number=1, a="A1", b="B1", c="C1")
     out("tune_choose", pick="A", final=False)
     out("tune_done")
     result = a.call("mo_output", initial="Dreams matter.", request="why dreams matter")
@@ -145,7 +150,7 @@ def test_tunes_tab_lists_and_deletes_without_confirmation(chats):
     out, _ = finished_output(a)
     tune_id = out("start_tune").json()["tune"]
     out("tune_choose_for_me")
-    a.text("mo_tune_variants", tune=tune_id, round_number=1, a="A1", b="B1", c="C1")
+    out = variants(a, tune=tune_id, round_number=1, a="A1", b="B1", c="C1")
     out("tune_choose", pick="A", final=True)
     cfg = a.box("mo_config")
     assert [t["id"] for t in cfg("list_tunes").json()["tunes"]] == [tune_id]
@@ -191,3 +196,43 @@ def test_each_round_draws_a_new_window_that_takes_over(chats):
     newer = window_of(a, result)
     newer("tune_choose", pick="B", final=False)                          # the new window carries on
     assert tunes.find(tune_id)["rounds"][0]["pick"] == "B"
+
+
+def test_only_the_chats_newest_window_is_interactive(chats):
+    a = chats("a")
+    out, _ = finished_output(a)
+    newer = a.box("mo_config")                                           # a newer window in the same chat
+    r = out("start_tune")
+    assert r.status_code == 409 and "newer MO window" in r.json()["error"]
+    assert out("result").json()["stale"] is True                         # reading still works, flagged stale
+    assert newer("list").json()["stale"] is False
+    other = chats("b").box("mo_config")                                  # another chat's windows don't count
+    assert other("list").json()["stale"] is False
+
+
+def test_retry_is_offered_after_20_s_if_chatgpt_never_picked_up(chats, monkeypatch):
+    a = chats("a")
+    out, _ = finished_output(a)
+    tune_id = out("start_tune").json()["tune"]
+    out("tune_choose_for_me")                                            # the window asks ChatGPT for A/B/C
+    assert out("tune_state").json()["stalled"] is False
+    clock = [time.time() + tunes.PICKUP_SECONDS + 1]
+    monkeypatch.setattr(tunes.time, "time", lambda: clock[0])
+    state = out("tune_state").json()
+    assert state["stalled"] is True and state["picked_up"] is False      # → "ChatGPT didn't pick this up" + Retry
+    a.text("mo_tune_work", tune=tune_id)                                 # ChatGPT picks it up
+    state = out("tune_state").json()
+    assert state["picked_up"] is True and state["stalled"] is False      # now the 90 s clock applies
+    clock[0] += 5
+    out("tune_continue")                                                 # Retry: the user's click, waits again
+    assert out("tune_state").json()["picked_up"] is False
+
+
+def test_the_window_reports_whether_its_message_reached_chatgpt(chats):
+    a = chats("a")
+    out, _ = finished_output(a)
+    out("followup", ok=True, what="Begin tuning")
+    out("followup", ok=False, what="Picked B", error="sendFollowUpMessage is not available")
+    sent, failed = events.read(type="followup_sent"), events.read(type="followup_failed")
+    assert sent[0]["what"] == "Begin tuning" and failed[0]["error"].startswith("sendFollowUpMessage")
+    assert sent[0]["actor"] == events.MO and sent[0]["reported_by"] == "window"

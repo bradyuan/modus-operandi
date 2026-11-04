@@ -9,24 +9,24 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
-import os
-import secrets
 from pathlib import Path
 from typing import Any
 
+from mcp.server.auth.provider import TokenVerifier
+from mcp.server.auth.settings import AuthSettings
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, TextContent, ToolAnnotations
 from starlette.requests import Request
-from starlette.responses import HTMLResponse, JSONResponse, Response
+from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from mo import boxes, chats, direct, events, profiles, runs, tunes
-from mo.events import CHATGPT, MO
+from mo import auth, boxes, chats, direct, events, profiles, runs, tunes, web
+from mo.events import CHATGPT, HUMAN_USER, MO
 
 BOX_MIME = "text/html;profile=mcp-app"
-LOCAL_HOSTS = ("127.0.0.1", "localhost", "[::1]")
 CORS = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type"}
 HERE = Path(__file__).parent
@@ -50,12 +50,17 @@ def chat_of(ctx: Context | None) -> str | None:
     return chat if isinstance(chat, str) and chat else None
 
 
-def create_server(public_url: str) -> MCPServer:
-    """`public_url` is the origin the MO box calls directly, e.g. https://abc.trycloudflare.com."""
-    server = MCPServer("MO", title="Modus Operandi", instructions=(
+def create_server(public_url: str, verifier: TokenVerifier | None = None) -> MCPServer:
+    """`public_url` is MO's public origin (the MO box calls it directly), e.g. https://modus-operandi-v1.fly.dev.
+    Every MCP call needs a sign-in token (`verifier`, default WorkOS AuthKit) and acts only in that
+    user's folder."""
+    server = MCPServer("MO", title="Modus Operandi", token_verifier=verifier or auth.AuthKitVerifier(),
+                       auth=AuthSettings(issuer_url=auth.AUTHKIT, resource_server_url=f"{public_url}/mcp",
+                                         validate_token_resource=False), instructions=(
         "When the user writes '@MO' followed by a request, answer it through MO: write your full answer, call "
         "mo_output with it (that opens the MO window), and follow MO's replies exactly. '@MO help' opens MO's help window; plain '@MO', "
         "'@MO config', '@MO profile', and '@MO seed' open MO's config window; '@MO tune' opens MO's tune window. "
+        "'@MO trace' and '@MO debug' open MO's trace window; '@MO who am I' calls mo_whoami. "
         "Only clicks in an MO window count; never choose a voice, a profile, or a variant yourself."))
     uri = box_uri(public_url)
     csp = {"connectDomains": [public_url], "resourceDomains": []}
@@ -66,6 +71,14 @@ def create_server(public_url: str) -> MCPServer:
     def mo_box() -> str:
         return (HERE / "box.html").read_text()
 
+    # ChatGPT caches tool metadata, so after a deploy it may still ask for an older window address.
+    # Answer any MO window address with the current window rather than "unknown resource".
+    @server.resource("ui://mo/box-{tag}.html", name="mo-box-any", mime_type=BOX_MIME,
+                     meta={"ui": {"csp": csp, "prefersBorder": True},
+                           "openai/widgetCSP": {"connect_domains": [public_url], "resource_domains": []}})
+    def mo_box_any(tag: str) -> str:
+        return (HERE / "box.html").read_text()
+
     def show_box(tool: str, kind: str, text: str, ctx: Context | None, profile: str | None = None,
                  chat: str | None = None, snapshot: Any = None, **view: str) -> CallToolResult:
         """`snapshot`, if given, is called with the new window's id and returns what the window shows
@@ -73,6 +86,8 @@ def create_server(public_url: str) -> MCPServer:
         # A box knows its chat (from ChatGPT's app); it reads that chat's voice when it needs it.
         chat = chat or chat_of(ctx)
         box, key = boxes.open_box(kind, chat=chat, **view)
+        if chat:
+            chats.set_latest(chat, box["id"])   # only the chat's newest window is interactive
         events.record(CHATGPT, "tool_call", tool=tool, box=box["id"], chat=chat,
                       **({"profile": profile} if profile else {}))
         snapshot = snapshot(box["id"]) if snapshot else None
@@ -98,6 +113,12 @@ def create_server(public_url: str) -> MCPServer:
     def mo_help(ctx: Context) -> CallToolResult:
         """Use when the user says '@MO help'. Shows MO's help window."""
         return show_box("mo_help", "help", "Showing MO's help window.", ctx)
+
+    @server.tool(title="MO trace", meta=box_meta, annotations=READ)
+    def mo_trace(ctx: Context) -> CallToolResult:
+        """Use when the user says '@MO trace' or '@MO debug', or wants to see what MO did under the hood. Shows MO's trace
+        window: this chat's recent MO activity and a link to the full trace page."""
+        return show_box("mo_trace", "trace", "Showing MO's trace window.", ctx)
 
     @server.tool(title="MO config", meta=box_meta, annotations=READ)
     def mo_config(ctx: Context) -> CallToolResult:
@@ -163,6 +184,7 @@ def create_server(public_url: str) -> MCPServer:
         if not runs.ready(found):
             raise refuse("This run is still waiting for the user to pick the chat's voice in the MO window.",
                          tool="mo_output_continue", run=found["id"])
+        runs.picked_up(found)
         events.record(CHATGPT, "output_continued", profile=found["profile"], run=found["id"], chat=chat_of(ctx))
         return runs.next_step(found)
 
@@ -230,6 +252,7 @@ def create_server(public_url: str) -> MCPServer:
         """Use when the user (through an MO window, e.g. "Picked B · continue MO tune …") asks you to continue
         an MO tune. Read-only: returns what to do next; follow it exactly."""
         found = find_tune(tune, "mo_tune_work", ctx)
+        tunes.picked_up(found)
         events.record(CHATGPT, "tune_work", profile=found["profile"], tune=found["id"], status=found["status"],
                       chat=chat_of(ctx))
         return tunes.instructions(found)
@@ -250,6 +273,16 @@ def create_server(public_url: str) -> MCPServer:
                           chat=found.get("chat"), snapshot=live_window(found), tune=found["id"])
         return result
 
+    @server.tool(title="MO who am I", annotations=READ)
+    def mo_whoami(ctx: Context) -> str:
+        """Who MO thinks the signed-in user is: from the sign-in token, never from ChatGPT."""
+        user, chat = events.current_user(), chat_of(ctx)
+        chat_tag = hashlib.sha256(chat.encode()).hexdigest()[:8] if chat else "none"
+        admin = auth.is_admin(user) if user else False
+        events.record(CHATGPT, "tool_call", tool="mo_whoami", chat=chat, admin=admin)
+        return (f"MO sees you as user {user}.\nAdmin: {'yes' if admin else 'no'}.\nThis chat: {chat_tag}.\n"
+                "(From your sign-in token; ChatGPT didn't tell MO who you are.)")
+
     @server.custom_route("/box/{box_id}/event", methods=["POST", "OPTIONS"], include_in_schema=False)
     async def box_event(request: Request) -> Response:
         if request.method == "OPTIONS":
@@ -259,25 +292,106 @@ def create_server(public_url: str) -> MCPServer:
             body = await request.json()
         except json.JSONDecodeError:
             body = {}
-        box = boxes.verify(box_id, body.get("key"))
-        if box is None:
-            events.record(MO, "refused", reason="bad box key", box=box_id, action=body.get("action"))
+        # The window acts for the user it was opened for (set from that call's sign-in token).
+        owner = boxes.owner(box_id)
+        if owner is None:
+            events.record(MO, "refused", reason="unknown box", box=box_id, action=body.get("action"))
             return JSONResponse({"error": "not signed by this box"}, status_code=403, headers=CORS)
-        status, reply = direct.handle(box, body)
+        with events.as_user(owner):
+            box = boxes.verify(box_id, body.get("key"))
+            if box is None:
+                events.record(MO, "refused", reason="bad box key", box=box_id, action=body.get("action"))
+                return JSONResponse({"error": "not signed by this box"}, status_code=403, headers=CORS)
+            status, reply = direct.handle(box, body)
         return JSONResponse(reply, status_code=status, headers=CORS)
+
+    # --- the trace (HOSTING.md §4): signed in with the same WorkOS account; read-only.
+    # Each user sees only their own data; an admin may open any user's with ?user=<id>.
+
+    def viewer(request: Request) -> tuple[str | None, bool]:
+        """(signed-in user or None, is admin)."""
+        user = web.session_user(request.cookies.get(web.COOKIE))
+        return user, bool(user and auth.is_admin(user))
+
+    def target(request: Request) -> str | None:
+        """Whose trace this request reads: your own, or (admins only) the user asked for. None → refuse."""
+        user, admin = viewer(request)
+        if user is None:
+            return None
+        asked = request.query_params.get("user")
+        if asked and asked != user:
+            if not admin or not (events.data_root() / "users" / asked).is_dir():
+                return None
+            return asked
+        return user
+
+    def refused(request: Request) -> Response:
+        user, _ = viewer(request)
+        return JSONResponse({"error": "sign in" if user is None else "not yours"}, status_code=401 if user is None else 403)
 
     @server.custom_route("/trace", methods=["GET"], include_in_schema=False)
     async def trace_page(request: Request) -> Response:
-        if not _local(request):
-            return Response(status_code=404)
-        return HTMLResponse((HERE / "trace.html").read_text())
+        user, _ = viewer(request)
+        return HTMLResponse((HERE / ("trace.html" if user else "signin.html")).read_text())
+
+    @server.custom_route("/trace/login", methods=["GET"], include_in_schema=False)
+    async def trace_login(request: Request) -> Response:
+        url, state = web.login_url(f"{public_url}/trace/callback")
+        response = RedirectResponse(url, status_code=302)
+        response.set_cookie(web.STATE_COOKIE, state, max_age=600, httponly=True, secure=True, samesite="lax")
+        return response
+
+    @server.custom_route("/trace/callback", methods=["GET"], include_in_schema=False)
+    async def trace_callback(request: Request) -> Response:
+        q = request.query_params
+        state, expected = q.get("state", ""), request.cookies.get(web.STATE_COOKIE, "")
+        user = web.user_from_code(q.get("code", "")) if expected and hmac.compare_digest(state, expected) else None
+        if user is None:
+            events.record(MO, "refused", reason="trace sign-in failed")
+            return HTMLResponse("Sign-in didn't work. <a href='/trace'>Try again</a>.", status_code=403)
+        with events.as_user(user):
+            events.record(HUMAN_USER, "trace_signed_in")
+        response = RedirectResponse("/trace", status_code=302)
+        response.delete_cookie(web.STATE_COOKIE)
+        response.set_cookie(web.COOKIE, web.make_session(user), max_age=web.SESSION_DAYS * 86400,
+                            httponly=True, secure=True, samesite="lax")
+        return response
+
+    @server.custom_route("/trace/logout", methods=["GET"], include_in_schema=False)
+    async def trace_logout(request: Request) -> Response:
+        response = RedirectResponse("/trace", status_code=302)
+        response.delete_cookie(web.COOKIE)
+        return response
+
+    @server.custom_route("/trace/me", methods=["GET"], include_in_schema=False)
+    async def trace_me(request: Request) -> Response:
+        user, admin = viewer(request)
+        if user is None:
+            return refused(request)
+        return JSONResponse({"user": user, "admin": admin})
+
+    @server.custom_route("/trace/users", methods=["GET"], include_in_schema=False)
+    async def trace_users(request: Request) -> Response:
+        """Admins only: every user, by ID, with counts."""
+        user, admin = viewer(request)
+        if not admin:
+            return refused(request) if user is None else JSONResponse({"error": "admins only"}, status_code=403)
+        found = []
+        for folder in sorted((events.data_root() / "users").glob("*")) if (events.data_root() / "users").is_dir() else []:
+            with events.as_user(folder.name):
+                log = events.read()
+                found.append({"user": folder.name, "profiles": len(profiles.list_all()), "events": len(log),
+                              "last": log[-1]["at"] if log else None,
+                              "bytes": sum(f.stat().st_size for f in folder.rglob("*") if f.is_file())})
+        return JSONResponse(found)
 
     @server.custom_route("/trace/events", methods=["GET"], include_in_schema=False)
     async def trace_events(request: Request) -> Response:
-        if not _local(request):
-            return Response(status_code=404)
+        if (who := target(request)) is None:
+            return refused(request)
         q = request.query_params
-        found = events.read(actor=q.get("actor"), type=q.get("type"), box=q.get("box"))
+        with events.as_user(who):
+            found = events.read(actor=q.get("actor"), type=q.get("type"), box=q.get("box"))
         if (profile := q.get("profile")) is not None:
             # profile=none selects events that belong to no profile
             found = [e for e in found if e.get("profile") == (None if profile == "none" else profile)]
@@ -285,69 +399,42 @@ def create_server(public_url: str) -> MCPServer:
 
     @server.custom_route("/trace/profiles", methods=["GET"], include_in_schema=False)
     async def trace_profiles(request: Request) -> Response:
-        if not _local(request):
-            return Response(status_code=404)
-        return JSONResponse(profiles.list_all())
+        if (who := target(request)) is None:
+            return refused(request)
+        with events.as_user(who):
+            return JSONResponse(profiles.list_all())
 
     @server.custom_route("/trace/profiles/{name}", methods=["GET"], include_in_schema=False)
     async def trace_profile(request: Request) -> Response:
-        """One profile's store, full text included (this computer only)."""
-        if not _local(request):
-            return Response(status_code=404)
+        """One profile's store, full text included."""
+        if (who := target(request)) is None:
+            return refused(request)
         try:
             name = request.path_params["name"]
-            return JSONResponse({**profiles.summary(name), "seeds": profiles.seeds(name), "runs": runs.list_for(name),
-                                 "tunes": tunes.all_for(name)})
+            with events.as_user(who):
+                return JSONResponse({**profiles.summary(name), "seeds": profiles.seeds(name),
+                                     "runs": runs.list_for(name), "tunes": tunes.all_for(name)})
         except (ValueError, FileNotFoundError):
             return JSONResponse({"error": "no such profile"}, status_code=404)
 
     return server
 
 
-def _local(request: Request) -> bool:
-    """The trace holds the human user's text: this computer only, never through the tunnel."""
-    host = request.headers.get("host", "")
-    if host.startswith("["):
-        return host.startswith("[::1]")
-    return host.rsplit(":", 1)[0] in LOCAL_HOSTS
-
-
-def secret() -> str:
-    """A stable secret for the public MCP path, standing in for sign-in during development."""
-    if env := os.environ.get("MO_SECRET"):
-        return env
-    path = events.mo_home() / "secret"
-    if not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(secrets.token_urlsafe(24) + "\n")
-        path.chmod(0o600)
-    return path.read_text().strip()
-
-
-def serve(public_host: str, port: int, bind: str = "127.0.0.1", show_link: bool = True) -> None:
-    """Serve MO at https://<public_host>/mcp/<secret>. Locally (make run) the link is printed; hosted
-    (make deploy) it isn't, so the secret never lands in the host's logs (`make link` shows it)."""
+def serve(public_host: str, port: int, bind: str = "0.0.0.0") -> None:
+    """Serve MO at https://<public_host>/mcp. Sign-in is the lock, so the address can be public."""
     public_url = f"https://{public_host}"
-    hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*", public_host]
-    origins = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*", public_url]
-    path = f"/mcp/{secret()}"
-    if show_link:
-        print(f"\nMO is reachable at:  {public_url}{path}   ← for ChatGPT (keep private)\n"
-              f"Trace:               http://127.0.0.1:{port}/trace   ← for you (this computer only)\n", flush=True)
-    else:
-        print(f"MO is serving {public_url} (link: make link · trace: make trace)", flush=True)
+    print(f"MO is serving {public_url}/mcp (sign-in: {auth.AUTHKIT})", flush=True)
     create_server(public_url).run(
-        transport="streamable-http", host=bind, port=port, streamable_http_path=path,
-        transport_security=TransportSecuritySettings(allowed_hosts=hosts, allowed_origins=origins),
+        transport="streamable-http", host=bind, port=port, streamable_http_path="/mcp",
+        transport_security=TransportSecuritySettings(allowed_hosts=[public_host], allowed_origins=[public_url]),
     )
 
 
 def main() -> None:
-    """Hosted entry point (`mo-server`); `make run` uses `mo.dev` instead."""
+    """Hosted entry point (`mo-server`)."""
     parser = argparse.ArgumentParser(description="Run MO's server.")
-    parser.add_argument("--public-host", required=True, help="e.g. mo-yourname.fly.dev")
-    parser.add_argument("--port", type=int, default=8000)
-    parser.add_argument("--bind", default="127.0.0.1", help="0.0.0.0 inside a container")
-    parser.add_argument("--hide-link", action="store_true", help="don't print the secret link (hosted)")
+    parser.add_argument("--public-host", required=True, help="e.g. modus-operandi-v1.fly.dev")
+    parser.add_argument("--port", type=int, default=8080)
+    parser.add_argument("--bind", default="0.0.0.0")
     args = parser.parse_args()
-    serve(args.public_host.removeprefix("https://").rstrip("/"), args.port, args.bind, not args.hide_link)
+    serve(args.public_host.removeprefix("https://").rstrip("/"), args.port, args.bind)

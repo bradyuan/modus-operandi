@@ -20,6 +20,8 @@
            border-radius: 8px; padding: 5px 12px; cursor: pointer; }
   button.danger { border-color: var(--bad); color: var(--bad); }
   button.primary { border-color: var(--label); color: var(--label); font-weight: 600; }
+  table.trace { width: 100%; border-collapse: collapse; font-size: 12px; }
+  table.trace td { padding: 3px 6px; border-bottom: 1px solid color-mix(in srgb, currentColor 12%, transparent); vertical-align: top; }
   button:disabled { opacity: .5; cursor: default; }
   input, textarea, select { font: inherit; border: 1px solid var(--line); background: var(--bg); color: var(--ink);
                             border-radius: 8px; padding: 5px 10px; min-width: 0; box-sizing: border-box; }
@@ -41,12 +43,17 @@
   .target { background: color-mix(in srgb, var(--label) 14%, transparent); border-radius: 4px; padding: 0 2px; }
   .variant { display: flex; gap: 8px; align-items: flex-start; padding: 8px 0; border-bottom: 1px solid var(--line); }
   .variant .text { white-space: pre-wrap; font: 15px/1.6 ui-serif, Georgia, serif; flex: 1; }
+  .base { border-left: 3px solid var(--line); padding: 2px 0 2px 12px; margin: 10px 0 4px; }
+  .base .text { white-space: pre-wrap; font: 15px/1.6 ui-serif, Georgia, serif; margin-top: 2px; }
   .history { font-size: 12px; color: var(--muted); margin-top: 10px; }
   .stub { color: var(--muted); font-size: 13px; overflow: hidden; transition: opacity .3s; }
   .folding { animation: fold .45s ease forwards; }
   @keyframes fold { from { opacity: 1; max-height: 1600px; } to { opacity: .6; max-height: 2.2em; } }
   .help dt { font-weight: 600; margin-top: 10px; } .help dd { margin: 2px 0 0; color: var(--muted); }
   code { font-size: 13px; }
+  code.msg { font-size: 12px; padding: 2px 6px; border: 1px solid var(--line); border-radius: 6px; user-select: all; }
+  body.stale #view button, body.stale #view input, body.stale #view textarea, body.stale #view select,
+  body.stale #view [data-s] { pointer-events: none; opacity: .45; }
 </style>
 </head>
 <body>
@@ -97,8 +104,19 @@ async function call(action, extra = {}) {
     throw new Offline("Can't reach MO right now. Reconnecting…");
   }
   const body = await r.json().catch(() => ({error: "MO sent an unreadable reply"}));
+  if (body.stale) markStale();
   if (!r.ok) throw new Error(body.error || `MO refused (${r.status})`);
   return body;
+}
+
+// Only the chat's newest MO window is interactive (MO refuses clicks from older ones). An older window
+// keeps showing what it showed, greyed out, and says where to go.
+let stale = false;
+function markStale() {
+  if (stale) return;
+  stale = true;
+  document.body.classList.add("stale");
+  status("A newer MO window is open below. This one is read-only now.");
 }
 
 async function guarded(fn) {
@@ -119,8 +137,27 @@ async function resilient(fn, retry) {
 // don't scroll the chat (the result stays in view); tune rounds do, since the next round's window
 // appears at the bottom.
 async function tellChatGPT(prompt, scrollToBottom = false) {
-  if (window.openai?.sendFollowUpMessage) await window.openai.sendFollowUpMessage({prompt, scrollToBottom});
-  else post({id: 2, method: "ui/message", params: {role: "user", content: [{type: "text", text: prompt}]}});
+  const what = prompt.split(" · ")[0];
+  try {
+    if (window.openai?.sendFollowUpMessage) await window.openai.sendFollowUpMessage({prompt, scrollToBottom});
+    else post({id: 2, method: "ui/message", params: {role: "user", content: [{type: "text", text: prompt}]}});
+    call("followup", {ok: true, what}).catch(() => {});
+  } catch (e) {
+    call("followup", {ok: false, what, error: String(e?.message || e)}).catch(() => {});
+    status(`<span class="bad">Couldn't send the message to ChatGPT. Use Retry, or copy the message below into the chat.</span>`);
+  }
+}
+
+// When ChatGPT doesn't pick up: the exact message, to copy into the chat by hand.
+function copyHtml(text) {
+  return `<div class="row"><span class="muted">Or send it yourself:</span><code class="msg">${esc(text)}</code>
+    <button data-copy="${esc(text)}">Copy message</button></div>`;
+}
+function wireCopy(el) {
+  el.querySelectorAll("[data-copy]").forEach(b => b.onclick = async () => {
+    try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = "Copied"; }
+    catch { b.textContent = "Select the text and copy it"; }
+  });
 }
 const continueRun = (run, what = "clicked") => tellChatGPT(`${what} · continue MO run ${run}`);
 
@@ -152,6 +189,8 @@ function helpView() {
     <dt><code>@MO tune</code> · or <b>Tune voice profile</b> under an output</dt>
     <dd>Click Begin Tuning (optionally say what bothers you, or click the sentences). Then click A, B, or C; the next
         round varies your pick. Click Done to keep it: the tune goes into the voice.</dd>
+    <dt><code>@MO trace</code> · <code>@MO debug</code></dt>
+    <dd>What MO did under the hood in this chat, and a link to your full trace page (sign in with the same account).</dd>
     <dt><code>@MO help</code></dt>
     <dd>This window.</dd>
     <dt>Voice for this chat</dt>
@@ -332,10 +371,17 @@ function tuneUI(el, label) {
       </details>`;
     else if (t.status === "vary") html = `<div class="final">${marked()}</div>
       <p class="muted">Writing ${t.rounds.length ? "variants of your pick" : "A, B, C"}…</p>` + (t.stalled
-      ? `<div class="row"><span class="muted">ChatGPT stopped.</span><button class="primary" id="cont">Continue?</button></div>` : "");
+      ? `<div class="row"><span class="muted">${t.picked_up ? "ChatGPT stopped." : "ChatGPT didn't pick this up."}</span>
+          <button class="primary" id="cont">${t.picked_up ? "Continue?" : "Retry"}</button></div>${copyHtml(`continue MO tune ${t.tune}`)}` : "");
     else if (t.status === "choose") {
       const r = t.rounds[t.rounds.length - 1];
-      html = `<p class="muted">Round ${r.round}${t.rounds.length > 1 ? " · variants of your pick" : ""}: click the one you like best</p>
+      // What these variants vary: the part itself in round 1, then your latest pick, so you can compare.
+      const prev = t.rounds.slice(0, -1).reverse().find(x => x.pick);
+      const baseText = t.base || t.target || "";
+      const baseHtml = baseText ? `<div class="base"><div class="muted">${prev
+        ? `Your pick from round ${prev.round} (${esc(prev.pick)})` : "The part you're tuning"}</div>
+        <div class="text">${esc(baseText)}</div></div>` : "";
+      html = `${baseHtml}<p class="muted">Round ${r.round}${t.rounds.length > 1 ? " · variants of your pick" : ""}: click the one you like best</p>
         ${["A", "B", "C"].map(k => `<div class="variant"><button class="primary" data-pick="${k}"
           style="font-size:16px;min-width:46px">${k}</button><span class="text">${esc(r.variants[k])}</span></div>`).join("")}
         <textarea id="note" style="min-height:50px;margin-top:10px" placeholder="Anything to change next round? (optional) e.g. I don't like the word &quot;debauchery&quot;"></textarea>
@@ -363,6 +409,7 @@ function tuneUI(el, label) {
     on("done", () => act("tune_done"));
     on("none", () => act("tune_choose", {pick: null, comment: note(), final: false}, "None of these"));
     on("cont", () => act("tune_continue", {}, "Continue"));
+    wireCopy(el);
     on("over", () => { clicked = []; act("tune_start_over"); });
   }
   // A newer window for this tune (the next round, drawn at the bottom) takes over: fold this one up.
@@ -444,7 +491,8 @@ function outputView() {
       let line;
       if (r.done) line = r.seeds ? `100% voice loaded · ${r.changed}% changed from ChatGPT's first draft`
                                  : `No seeds in ${esc(r.profile)}, so this is ChatGPT's own text.`;
-      else if (r.stalled) line = `${r.voice_loaded}% voice loaded. <button class="primary" data-continue>Continue?</button>`;
+      else if (r.stalled) line = `${r.voice_loaded}% voice loaded. ${r.picked_up ? "ChatGPT stopped." : "ChatGPT didn't pick this up."}
+        <button class="primary" data-continue>${r.picked_up ? "Continue?" : "Retry"}</button>${copyHtml(`continue MO run ${r.run}`)}`;
       else line = `Loading voice… ${r.voice_loaded}%`;
       el.innerHTML = `${head}<div class="final">${esc(r.best)}</div><div class="muted" style="margin-top:6px">${line}</div>
         ${r.done && isMain ? `<div class="row"><span class="muted">Not satisfied?</span>
@@ -455,6 +503,7 @@ function outputView() {
         $("voicectl").innerHTML = ""; $("reruns").innerHTML = ""; status("");
         tuneUI($("view"), "MO · Tune");
       });
+      wireCopy(el);
       const cont = el.querySelector("[data-continue]");
       if (cont) cont.onclick = () => guarded(async () => {
         const go = await call("continue_clicked", runId === output.run ? {} : {run: runId});
@@ -516,7 +565,29 @@ function outputView() {
   follow($("run-main"), output.run, true);
 }
 
-const VIEWS = {help: helpView, config: configView, output: outputView, tune: tuneView};
+function openTrace() {
+  const href = `${endpoint}/trace`;
+  if (window.openai?.openExternal) window.openai.openExternal({href}); else window.open(href, "_blank");
+}
+
+// --- trace window: this chat's recent MO activity, and the full trace page
+async function traceView() {
+  $("label").textContent = "MO · Trace";
+  const open = `<button class="primary" id="open-trace">Open full trace</button>`;
+  const {events} = await call("recent");
+  const rows = events.length ? events.slice().reverse().map(e => {
+    const {at, actor, type, ...rest} = e;
+    const bits = Object.entries(rest).map(([k, v]) => `${esc(k)} ${esc(v)}`).join(" · ");
+    return `<tr><td class="muted">${new Date(at * 1000).toLocaleTimeString()}</td><td><b>${esc(actor)}</b></td>
+      <td>${esc(type)}${bits ? ` <span class="muted">${bits}</span>` : ""}</td></tr>`;
+  }).join("") : `<tr><td class="muted">Nothing from this chat yet.</td></tr>`;
+  $("view").innerHTML = `<p>This chat's latest MO activity, newest first. Every click you make in an MO window shows
+    as <b>HUMAN USER</b>; ChatGPT's calls as <b>CHATGPT</b>.</p><table class="trace">${rows}</table><p>${open}</p>`;
+  $("open-trace").onclick = openTrace;
+  status("The full trace page signs you in with the same account you use for MO in ChatGPT.");
+}
+
+const VIEWS = {help: helpView, config: configView, output: outputView, tune: tuneView, trace: traceView};
 
 // ChatGPT globals (compatibility API)
 function fromOpenAI() { const o = window.openai; if (o) absorb(o.toolOutput, o.toolResponseMetadata); }

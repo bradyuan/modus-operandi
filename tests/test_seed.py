@@ -3,6 +3,8 @@ import json
 from mo import chats as chat_voices
 from mo import events, profiles
 
+from conftest import sign_in
+
 
 def config(chat):
     return chat.box("mo_config")
@@ -90,12 +92,12 @@ def test_deleting_a_profile_makes_its_chats_ask_again(chats):
     assert events.read(type="profile_deleted")[0]["lost"]["chats"] == 2
 
 
-def test_trace_shows_a_profiles_seeds_locally_only(chats, client):
+def test_trace_shows_a_profiles_seeds_only_when_signed_in(chats, client):
     win = config(chats("a"))
     win("create", name="shakespear")
     win("set_voice", name="shakespear")
     win("add_seed", text="Shall I compare thee to a summer's day?")
-    local = client.get("/trace/profiles/shakespear", headers={"host": "127.0.0.1:8000"}).json()
-    assert local["seeds"][0]["text"] == "Shall I compare thee to a summer's day?"
-    assert client.get("/trace/profiles/shakespear", headers={"host": "abc.trycloudflare.com"}).status_code == 404
-    assert client.get("/trace/profiles/nope", headers={"host": "127.0.0.1:8000"}).status_code == 404
+    assert client.get("/trace/profiles/shakespear").status_code == 401   # signed out
+    mine = sign_in(client).get("/trace/profiles/shakespear").json()
+    assert mine["seeds"][0]["text"] == "Shall I compare thee to a summer's day?"
+    assert client.get("/trace/profiles/nope").status_code == 404

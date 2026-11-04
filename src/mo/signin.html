@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MO trace</title>
+<style>
+  :root { --bg: #f7f6f3; --card: #fff; --ink: #1d1d1b; --muted: #6b6a66; --line: #e3e1dc; color-scheme: light; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161614; --card: #1f1f1d; --ink: #ecebe7; --muted: #9b9a95; --line: #33322f; color-scheme: dark; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 system-ui, -apple-system, sans-serif; }
+  main { max-width: 420px; margin: 12vh auto 0; padding: 0 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 28px 24px; }
+  h1 { font-size: 20px; margin: 0 0 8px; }
+  p { color: var(--muted); margin: 0 0 20px; }
+  a.button { display: block; text-align: center; background: var(--ink); color: var(--bg); text-decoration: none;
+             border-radius: 8px; padding: 10px 14px; font-weight: 600; }
+</style>
+</head>
+<body>
+<main><div class="card">
+  <h1>MO trace</h1>
+  <p>See what MO did under the hood: every step ChatGPT took and every click you made. Sign in with the same
+     account you use for MO in ChatGPT.</p>
+  <a class="button" href="/trace/login">Sign in</a>
+</div></main>
+</body>
+</html>

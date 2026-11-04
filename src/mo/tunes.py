@@ -27,6 +27,7 @@ from mo.events import mo_home
 PROMPT_VERSION = "tune-v1"
 PROMPTS = Path(__file__).parent / "prompts"
 STALL_SECONDS = 90  # same as runs.STALL_SECONDS
+PICKUP_SECONDS = 20  # ChatGPT hasn't even started on the user's last click → offer Retry sooner
 OPEN_EXPIRES = 24 * 3600
 SKIP_SENTENCES = 3
 _ID_RE = re.compile(r"^[0-9a-f]{8}$")
@@ -103,9 +104,23 @@ def touch(tune: dict[str, Any]) -> None:
     _save(tune)
 
 
+def picked_up(tune: dict[str, Any]) -> None:
+    """ChatGPT asked MO for this tune's next step (mo_tune_work)."""
+    tune["picked_up"] = time.time()
+    _save(tune)
+
+
+def waiting_for_pickup(tune: dict[str, Any]) -> bool:
+    """The user handed work to ChatGPT and ChatGPT hasn't asked MO for it yet."""
+    return tune["status"] == VARY and tune.get("picked_up", 0) < tune["active"]
+
+
 def stalled(tune: dict[str, Any], now: float | None = None) -> bool:
-    """Waiting on ChatGPT to write variants for too long."""
-    return tune["status"] == VARY and (now or time.time()) - tune["active"] > STALL_SECONDS
+    """Waiting on ChatGPT too long: 20 s if it never picked up the user's click, else 90 s."""
+    if tune["status"] != VARY:
+        return False
+    waited = (now or time.time()) - max(tune["active"], tune.get("picked_up", 0))
+    return waited > (PICKUP_SECONDS if waiting_for_pickup(tune) else STALL_SECONDS)
 
 
 def _need(tune: dict[str, Any], *statuses: str) -> None:
@@ -267,7 +282,7 @@ def notes(tune: dict[str, Any]) -> list[str]:
 def summary(tune: dict[str, Any]) -> dict[str, Any]:
     """What the Tune window shows."""
     return {"tune": tune["id"], "profile": tune["profile"], "status": tune["status"], "stalled": stalled(tune),
-            "source": tune["source"]["text"], "sentences": sentences(tune["source"]["text"]),
+            "picked_up": not waiting_for_pickup(tune), "source": tune["source"]["text"], "sentences": sentences(tune["source"]["text"]),
             "target": tune["target"], "how": tune["how"],
             "descriptions": tune["descriptions"], "rounds": tune["rounds"], "base": base(tune) if tune["target"] else None,
             "final": tune["final"], "tuned": tuned_text(tune), "answered": answered(tune),

@@ -5,6 +5,8 @@ import pytest
 
 from mo import events, profiles, runs
 
+from conftest import sign_in
+
 INITIAL = "Sleep matters because the brain clears waste and stores memories while you rest."
 REWRITTEN = "Sleep, that knits the ravelled sleeve of care, doth clear the brain and keep its memories."
 
@@ -159,7 +161,7 @@ def test_the_trace_keeps_exactly_what_mo_sent_each_pass(chats, client):
     run_id, reply, _ = start(a)
     a.text("mo_output_pass", run=run_id, pass_number=1, version=REWRITTEN)
     win("delete_seeds", ids=[win("list_seeds").json()["seeds"][0]["id"]])   # deleting a seed later…
-    [run] = client.get("/trace/profiles/shakespear", headers={"host": "127.0.0.1:8000"}).json()["runs"]
+    [run] = sign_in(client).get("/trace/profiles/shakespear").json()["runs"]
     assert run["sent"]["1"] == reply                                        # …doesn't rewrite history
 
 
@@ -167,6 +169,7 @@ def test_deleting_a_profile_deletes_its_runs(chats):
     a = chats("a")
     win = voiced(a)
     run_id, _, _ = start(a)
+    win = a.box("mo_config")                                   # the Output window is newer: open Config again
     code = win("delete", name="shakespear").json()["confirm"]
     win("confirm_delete", name="shakespear", confirm=code)
     with pytest.raises(ValueError):

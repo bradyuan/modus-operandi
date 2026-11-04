@@ -13,15 +13,29 @@ from mo import boxes, chats, events, profiles, runs, tunes
 from mo.events import HUMAN_USER, MO
 
 
+# Actions that only read, or report what the window saw. Allowed in any window, even an older one.
+READ_ONLY = {"state", "list", "list_seeds", "list_tunes", "result", "tune_state", "recent", "followup"}
+
+
+def stale(box: dict[str, Any]) -> bool:
+    """A newer MO window is open in this window's chat: only the newest one is interactive."""
+    newest = chats.latest(box.get("chat"))
+    return newest is not None and newest != box["id"]
+
+
 def handle(box: dict[str, Any], body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     action = body.get("action")
     handler = ACTIONS.get(box["kind"], {}).get(action) or EVERY_BOX.get(action)
     if handler is None:
         return refuse(box, action, f"{action!r} isn't an action for a {box['kind']} box")
+    old = stale(box)
+    if old and action not in READ_ONLY:
+        return refuse(box, action, "A newer MO window is open in this chat. Use that one.", status=409)
     try:
-        return handler(box, body)
+        status, reply = handler(box, body)
     except ValueError as exc:
         return refuse(box, action, str(exc), status=400)
+    return status, {**reply, "stale": old}
 
 
 def refuse(box: dict[str, Any], action: Any, reason: str, status: int = 403) -> tuple[int, dict[str, Any]]:
@@ -64,7 +78,17 @@ def _set_voice(box, body):
     return _state(box, body)
 
 
-EVERY_BOX = {"state": _state, "set_voice": _set_voice}
+def _followup(box, body):
+    """What the window saw when it posted a message to ChatGPT (sent, or the error). A fact for the
+    trace: the one step MO can't see itself."""
+    ok = body.get("ok") is True
+    events.record(MO, "followup_sent" if ok else "followup_failed", box=box["id"], chat=box.get("chat"),
+                  what=str(body.get("what", ""))[:80], reported_by="window",
+                  **({} if ok else {"error": str(body.get("error", ""))[:200]}))
+    return 200, {}
+
+
+EVERY_BOX = {"state": _state, "set_voice": _set_voice, "followup": _followup}
 
 
 # --- config box: Profiles tab
@@ -169,6 +193,7 @@ def _choose_voice(box, body):
     name = chats.set_voice(box.get("chat"), body.get("name"))
     events.record(HUMAN_USER, "voice_set", box=box["id"], profile=name, chat=box.get("chat"))
     runs.assign(run, name)
+    runs.touch(run)  # the window now asks ChatGPT to continue; wait for it to pick that up
     events.record(MO, "run_ready", run=run["id"], profile=name, chat=run.get("chat"))
     return 200, {"continue": run["id"], **_result(box, body)[1]}
 
@@ -322,7 +347,17 @@ TUNE_ACTIONS = {"tune_state": _tune_state, "tune_select": _tune_select, "tune_ch
                 "tune_start_over": _tune_start_over, "tune_continue": _tune_continue}
 
 
+# --- trace window: this chat's recent activity (read-only)
+
+def _recent(box, body):
+    """The last 15 events from this window's chat, ids and counts only (the full trace page has text)."""
+    found = [e for e in events.read() if box.get("chat") and e.get("chat") == box["chat"]][-15:]
+    keep = ("at", "actor", "type", "tool", "profile", "round", "pick", "pass_number", "words", "reason")
+    return 200, {"events": [{k: e[k] for k in keep if k in e} for e in found]}
+
+
 ACTIONS = {
+    "trace": {"recent": _recent},
     "output": {"result": _result, "choose_voice": _choose_voice, "continue_clicked": _continue_clicked,
                "rerun": _rerun, "start_tune": _start_tune, **TUNE_ACTIONS},
     "tune": {"tune_paste": _tune_paste, **TUNE_ACTIONS},

@@ -43,11 +43,14 @@
   .pass .label { font-size: 12px; color: var(--muted); margin-top: 6px; }
   .seed .text { white-space: pre-wrap; margin-top: 6px; font: 14px/1.6 ui-serif, Georgia, serif; }
   code { font-size: 12px; }
+  .top { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .top a { color: inherit; }
+  select { font: inherit; }
 </style>
 </head>
 <body>
 <main>
-  <h1>MO trace</h1>
+  <div class="top"><h1>MO trace</h1><div id="who" class="muted"></div></div>
   <div class="muted">Every event MO recorded, newest first, refreshing live. HUMAN USER events can only come
     from an MO box signed with that box's key. Deleting a profile removes its events; one line records the delete.</div>
   <nav id="tabs"></nav>
@@ -58,14 +61,15 @@
     <thead><tr><th>time</th><th>actor</th><th>event</th><th>details</th></tr></thead>
     <tbody id="rows"></tbody>
   </table></div>
-  <p class="muted">JSON: <code>/trace/events?profile=&lt;name|none&gt;&amp;actor=…&amp;box=…</code> ·
-    <code>/trace/profiles</code></p>
+  <p class="muted">Read-only. JSON: <code>/trace/events?profile=&lt;name|none&gt;&amp;actor=…&amp;box=…</code> ·
+    <code>/trace/profiles</code> · admins: <code>/trace/users</code>, and <code>?user=&lt;id&gt;</code> on any of these.</p>
 </main>
 <script>
 const ACTORS = ["HUMAN USER", "CHATGPT", "MO", "DEV"];
 const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 const params = new URLSearchParams(location.search);
 const state = {
+  user: params.get("user") || null,                    // admins: whose trace (null = your own)
   tab: params.get("profile") || "all",                 // "all" | "none" | a profile name
   actors: new Set(params.get("actor") ? params.get("actor").split(",") : ACTORS),
   refusalsOnly: params.get("refusals") === "1",
@@ -193,17 +197,46 @@ function render() {
   }).join("") : `<tr><td colspan="4" class="muted">No events here yet.</td></tr>`;
 }
 
+function saveUrl() {
+  const q = new URLSearchParams();
+  if (state.user) q.set("user", state.user);
+  if (state.tab !== "all") q.set("profile", state.tab);
+  if (state.actors.size !== ACTORS.length) q.set("actor", [...state.actors].join(","));
+  if (state.refusalsOnly) q.set("refusals", "1");
+  history.replaceState(null, "", q.toString() ? `?${q}` : location.pathname);
+}
+
 function update() { saveUrl(); render(); load(); }
+
+// Who's signed in; admins also get a picker of every user (by ID) and can open any user's trace.
+let me = null;
+const withUser = url => state.user ? `${url}${url.includes("?") ? "&" : "?"}user=${encodeURIComponent(state.user)}` : url;
+async function header() {
+  me = await fetch("/trace/me").then(r => r.ok ? r.json() : null).catch(() => null);
+  if (!me) { location.href = "/trace"; return; }
+  let picker = "";
+  if (me.admin) {
+    const users = await fetch("/trace/users").then(r => r.ok ? r.json() : []).catch(() => []);
+    const when = t => t ? new Date(t * 1000).toLocaleString() : "no activity";
+    picker = ` · <label>Viewing <select id="user-pick">${users.map(u => `<option value="${esc(u.user)}"
+      ${u.user === (state.user || me.user) ? "selected" : ""}>${esc(u.user)}${u.user === me.user ? " (you)" : ""} ·
+      ${u.profiles} profiles · ${u.events} events · ${Math.ceil(u.bytes / 1024)} KB · ${esc(when(u.last))}</option>`).join("")}
+      </select></label> <b>admin</b>`;
+  }
+  document.getElementById("who").innerHTML = `Signed in as <code>${esc(me.user)}</code>${picker} · <a href="/trace/logout">Sign out</a>`;
+  const pick = document.getElementById("user-pick");
+  if (pick) pick.onchange = () => { state.user = pick.value === me.user ? null : pick.value; state.tab = "all"; detail = null; update(); };
+}
 
 async function load() {
   const json = url => fetch(url).then(r => r.ok ? r.json() : null).catch(() => null);
-  const [ev, pr] = await Promise.all([json("/trace/events"), json("/trace/profiles")]);
+  const [ev, pr] = await Promise.all([json(withUser("/trace/events")), json(withUser("/trace/profiles"))]);
   all = ev || all;
   profiles = pr || profiles;
-  detail = profiles.some(p => p.name === state.tab) ? await json(`/trace/profiles/${encodeURIComponent(state.tab)}`) : null;
+  detail = profiles.some(p => p.name === state.tab) ? await json(withUser(`/trace/profiles/${encodeURIComponent(state.tab)}`)) : null;
   render();
 }
-load();
+header().then(load);
 setInterval(load, 2000);
 </script>
 </body>

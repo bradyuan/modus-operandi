@@ -4,20 +4,37 @@ import anyio
 import pytest
 from starlette.testclient import TestClient
 
+from mcp.server.auth.provider import AccessToken
+
+from mo import events, web
 from mo.server import create_server
 
 PUBLIC = "https://abc.trycloudflare.com"
+USER = "user_test"
+TOKENS = {"token-test": USER, "token-other": "user_other"}
+
+
+class FakeVerifier:
+    """Stands in for WorkOS AuthKit: a known token is that user; anything else is refused."""
+
+    async def verify_token(self, token):
+        user = TOKENS.get(token)
+        return AccessToken(token=token, client_id="chatgpt", scopes=[], subject=user) if user else None
 
 
 @pytest.fixture(autouse=True)
 def mo_home(tmp_path, monkeypatch):
+    """MO's store is tmp_path; direct calls in a test act as USER (its folder: tmp_path/users/USER).
+    Signed-in MCP calls ignore this: a token, when present, always decides the user."""
     monkeypatch.setenv("MO_HOME", str(tmp_path))
-    return tmp_path
+    monkeypatch.setenv("MO_SESSION_SECRET", "test-session-secret")
+    with events.as_user(USER):
+        yield tmp_path / "users" / USER
 
 
 @pytest.fixture
 def server():
-    return create_server(PUBLIC)
+    return create_server(PUBLIC, verifier=FakeVerifier())
 
 
 @pytest.fixture
@@ -25,10 +42,17 @@ def client(server):
     return TestClient(server.streamable_http_app())
 
 
+def sign_in(client, user=USER):
+    """The trace page's browser sign-in, as MO's own signed cookie for `user`."""
+    client.cookies.set(web.COOKIE, web.make_session(user))
+    return client
+
+
 def open_box(server, tool):
     """What ChatGPT gets (the result) and what only the box gets (its key, from hidden _meta).
     Called outside a real request, so the box has no chat."""
-    result = anyio.run(server.call_tool, tool, {})
+    with events.as_user(USER):
+        result = anyio.run(server.call_tool, tool, {})
     assert not result.is_error, result.content
     return result.structured_content["box"], result.meta["mo/key"], result
 
@@ -45,8 +69,9 @@ class Chat:
     HEADERS = {"accept": "application/json, text/event-stream", "content-type": "application/json",
                "host": "127.0.0.1:8000"}
 
-    def __init__(self, client, chat_id):
+    def __init__(self, client, chat_id, token="token-test"):
         self.client, self.chat_id, self.ids = client, chat_id, 10
+        self.HEADERS = dict(self.HEADERS, authorization=f"Bearer {token}")
         r, _ = self._rpc({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {
             "protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "chatgpt", "version": "1"}}})
         self.session = r.headers.get("mcp-session-id")

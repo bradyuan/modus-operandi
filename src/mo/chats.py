@@ -53,3 +53,21 @@ def forget_profile(name: str) -> int:
             path.unlink()
             cleared += 1
     return cleared
+
+
+def _latest_path(chat: str) -> Path:
+    return mo_home() / "chats" / f"{hashlib.sha256(chat.encode()).hexdigest()[:24]}.latest"
+
+
+def set_latest(chat: str, box_id: str) -> None:
+    """The chat's newest MO window. Older windows in the chat become read-only."""
+    path = _latest_path(chat)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(box_id)
+
+
+def latest(chat: str | None) -> str | None:
+    if not chat:
+        return None
+    path = _latest_path(chat)
+    return path.read_text().strip() if path.exists() else None

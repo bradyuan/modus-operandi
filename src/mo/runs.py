@@ -30,6 +30,7 @@ PROMPT = (Path(__file__).parent / "prompts" / f"{PROMPT_VERSION}.txt").read_text
 TUNES_PROMPT = (Path(__file__).parent / "prompts" / f"{TUNES_PROMPT_VERSION}.txt").read_text()
 BATCH_WORDS = 3000
 TUNE_BATCHES = (1, 3, 10, 30)    # tunes per pass, then 100s ("rule of 3s")
+PICKUP_SECONDS = 20         # ChatGPT hasn't even started on the user's Continue → offer Retry sooner
 STALL_SECONDS = 90          # no next step from ChatGPT for this long → the window offers "Continue?"
 WAITING_EXPIRES = 24 * 3600  # a run that never got a voice is dropped after this
 _ID_RE = re.compile(r"^[0-9a-f]{8}$")
@@ -138,9 +139,19 @@ def ready(run: dict[str, Any]) -> bool:
 
 
 def touch(run: dict[str, Any]) -> None:
-    """ChatGPT did something for this run (resets the stall clock)."""
-    run["active"] = time.time()
+    """The user asked ChatGPT to carry on (resets the stall clock and waits for ChatGPT to pick it up)."""
+    run["active"] = run["asked"] = time.time()
     _save(run)
+
+
+def picked_up(run: dict[str, Any]) -> None:
+    """ChatGPT asked MO for this run's next step (mo_output_continue)."""
+    run["picked_up"] = time.time()
+    _save(run)
+
+
+def waiting_for_pickup(run: dict[str, Any]) -> bool:
+    return run.get("picked_up", 0) < run.get("asked", 0)
 
 
 def voice_loaded(run: dict[str, Any]) -> int:
@@ -154,7 +165,11 @@ def voice_loaded(run: dict[str, Any]) -> int:
 
 
 def stalled(run: dict[str, Any], now: float | None = None) -> bool:
-    return ready(run) and not done(run) and (now or time.time()) - run.get("active", run["started"]) > STALL_SECONDS
+    """No next step from ChatGPT: 20 s if it never picked up the user's Continue, else 90 s."""
+    if not ready(run) or done(run):
+        return False
+    waited = (now or time.time()) - max(run.get("active", run["started"]), run.get("picked_up", 0))
+    return waited > (PICKUP_SECONDS if waiting_for_pickup(run) else STALL_SECONDS)
 
 
 def expire_waiting(now: float | None = None) -> list[str]:
@@ -205,7 +220,7 @@ def submit(run: dict[str, Any], pass_number: Any, version: Any, no_change_reason
     else:
         entry.update(no_change=no_change_reason.strip()[:300], changed=0)
     run["passes"].append(entry)
-    run["active"] = time.time()
+    run["active"] = run["picked_up"] = time.time()
     _save(run)
     return entry
 
@@ -246,7 +261,7 @@ def payload(run: dict[str, Any]) -> str:
 
 def summary(run: dict[str, Any]) -> dict[str, Any]:
     """What the Output window shows: always the best version so far, and how much voice is in it."""
-    return {"run": run["id"], "profile": run["profile"], "done": done(run), "stalled": stalled(run),
+    return {"run": run["id"], "profile": run["profile"], "done": done(run), "stalled": stalled(run), "picked_up": not waiting_for_pickup(run),
             "best": current(run), "voice_loaded": voice_loaded(run), "seeds": bool(run["batches"]),
             "passes": len(run["passes"]), "of": len(run["batches"]),
             "changed": changed(run["initial"], current(run))}

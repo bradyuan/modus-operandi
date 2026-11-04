@@ -11,4 +11,4 @@ RUN uv sync --frozen --no-dev
 
 EXPOSE 8080
 # FLY_APP_NAME is set by Fly.io; the public address is <app>.fly.dev.
-CMD ["sh", "-c", "exec uv run --no-dev mo-server --public-host ${FLY_APP_NAME}.fly.dev --port 8080 --bind 0.0.0.0 --hide-link"]
+CMD ["sh", "-c", "exec uv run --no-dev mo-server --public-host ${FLY_APP_NAME}.fly.dev --port 8080 --bind 0.0.0.0"]

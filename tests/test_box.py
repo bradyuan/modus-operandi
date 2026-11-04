@@ -1,8 +1,7 @@
 import anyio
 
-from conftest import PUBLIC, box_call, open_box
-from mo import events
-from mo.dev import tunnel_host
+from conftest import PUBLIC, USER, box_call, open_box, sign_in
+from mo import events, web
 from mo.server import box_uri
 
 
@@ -14,7 +13,7 @@ def test_key_goes_only_into_hidden_meta(server):
     assert events.read(actor=events.CHATGPT)[0]["box"] == box
 
 
-WINDOW_TOOLS = {"mo_help", "mo_config", "mo_seed", "mo_tune"}
+WINDOW_TOOLS = {"mo_help", "mo_config", "mo_seed", "mo_tune", "mo_trace"}
 
 
 def test_chatgpt_can_never_pass_a_profile_or_voice(server):
@@ -39,21 +38,20 @@ def test_unsigned_calls_are_refused_and_logged(server, client):
     box, key, _ = open_box(server, "mo_config")
     assert box_call(client, box, "forged", "create", name="evil").status_code == 403
     assert box_call(client, "deadbeef", key, "create", name="evil").status_code == 403  # another box's key
-    assert [e["reason"] for e in events.read(type="refused")] == ["bad box key", "bad box key"]
+    assert [e["reason"] for e in events.read(type="refused")] == ["bad box key", "unknown box"]
     assert events.read(actor=events.HUMAN_USER) == []
     r = box_call(client, box, key, "list")
     assert r.status_code == 200 and r.headers["access-control-allow-origin"] == "*"
 
 
-def test_trace_is_local_only(client):
-    assert client.get("/trace", headers={"host": "127.0.0.1:8000"}).status_code == 200
-    assert client.get("/trace/events", headers={"host": "localhost:8000"}).json() == []
-    assert client.get("/trace", headers={"host": "abc.trycloudflare.com"}).status_code == 404
-
-
-def test_reads_the_tunnel_address_from_cloudflared_output():
-    lines = ["INF Requesting new quick Tunnel", "INF |  https://brave-new-words.trycloudflare.com  |"]
-    assert tunnel_host(lines) == "brave-new-words.trycloudflare.com"
+def test_trace_needs_sign_in(client):
+    assert "Sign in" in client.get("/trace").text                       # signed out: the sign-in page
+    assert client.get("/trace/events").status_code == 401
+    real = web.make_session(USER)
+    client.cookies.set(web.COOKIE, real[:-1] + ("1" if real[-1] == "0" else "0"))   # a tampered cookie
+    assert client.get("/trace/events").status_code == 401
+    sign_in(client)
+    assert "MO trace" in client.get("/trace").text and client.get("/trace/events").json() == []
 
 
 def test_three_windows(server):
@@ -70,3 +68,10 @@ def test_the_chat_id_comes_from_chatgpts_app_metadata(chats):
     assert result["_meta"]["mo/chat"] == "chat-a"
     [event] = events.read(tool="mo_config")
     assert event["chat"] == "chat-a" and boxes.load(event["box"])["chat"] == "chat-a"
+
+
+def test_an_older_window_address_still_gets_the_current_window(server):
+    """After a deploy, ChatGPT may ask for a window address it cached before (seen 2026-11-03)."""
+    old = anyio.run(server.read_resource, "ui://mo/box-38ebf9b1.html")
+    current = anyio.run(server.read_resource, box_uri(PUBLIC))
+    assert list(old)[0].content == list(current)[0].content

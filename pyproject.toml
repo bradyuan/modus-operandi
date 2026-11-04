@@ -7,12 +7,13 @@ authors = [
 ]
 requires-python = ">=3.11"
 dependencies = [
+    "httpx>=0.28",
     "mcp>=2.3.0",
+    "pyjwt[crypto]>=2.10",
 ]
 
 [project.scripts]
-mo = "mo.dev:main"          # make run: local, behind a quick tunnel
-mo-server = "mo.server:main"  # make deploy: hosted
+mo-server = "mo.server:main"  # hosted (make deploy)
 
 [build-system]
 requires = ["uv_build>=0.13.6,<0.14.0"]
