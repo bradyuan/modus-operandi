@@ -309,3 +309,18 @@ entry here says why, and v2 begins.
   windows grey out with "A newer MO window is open below."
 - Tune rounds now show what's being varied above A/B/C: "The part you're tuning", then "Your pick
   from round N (X)".
+
+## 2026-11-05 — Tune batches 10, 30, 100 (approved), measured by a benchmark
+
+- MO is slow (the human user's rating: speed 3/10). Most of a run is ChatGPT rewriting the whole
+  text once per pass, so fewer passes is the lever; concurrency can't help (each pass needs the last).
+- Considered and dropped: skipping INITIAL (loses the fact anchor, "% changed", Rerun); all tunes in
+  one pass (doesn't scale); square-root chunks (more passes than ×3 as N grows).
+- Approved: tune batches **10, 30, 100, …** (was 1, 3, 10, 30). Still ×3 growth (~log₃ N passes), but
+  it starts at 10: two fewer full rewrites per request. Cost: the top tune no longer has a pass to itself.
+- Measured, not assumed: `bench/` runs 300 Databricks Dolly-15k queries through MO's real tool loop
+  (OpenAI Responses API standing in for ChatGPT), old and new schedules paired, p50/p95/p99. The human
+  user's blind A/B picks decide whether quality held.
+- Approved the same day: past 100, batches keep growing ×3 (300, 900, …) instead of 100 at a time,
+  so passes stay ~log₃ N for any number of tunes (it was linear past 140). Not yet built: a word
+  budget per tune pass (very large batches could overflow ChatGPT's context) and the 50 MB per-user cap.

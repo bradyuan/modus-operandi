@@ -67,7 +67,7 @@ preferences, captured through choices and notes (**tunes**). It makes ChatGPT wo
 ```
 
 - **Deterministic where MO acts:** ranking (seeds first, then tunes by rounds-to-✓), batch cut
-  points (1, 3, 10, 30, …), pass order, and what's stored are fixed code. Same store → same batches.
+  points (10, 30, 100, …), pass order, and what's stored are fixed code. Same store → same batches.
 - **Visible where ChatGPT acts:** whether it rewrote well is yours to judge; whether it skipped a
   pass, stalled, or never picked up a message shows in the window and the trace.
 
@@ -90,6 +90,23 @@ account you use in ChatGPT. Or type `@MO trace` in a chat.
 - **The MO window** (ChatGPT Apps SDK): its key arrives in hidden `_meta`, and its clicks go
   over HTTPS directly to MO, never through the model.
 - **Trace sign-in:** WorkOS authorization code flow; MO sets its own signed, HTTP-only session cookie.
+
+## Performance Benchmarks
+
+End-to-end latency of `@MO` + a request: from the query being sent to the last pass accepted (100% voice loaded). **300 queries** from [Databricks Dolly-15k](https://huggingface.co/datasets/databricks/databricks-dolly-15k) (open QA, general QA, creative writing, summarization), each run through MO's real MCP tool loop with the OpenAI Responses API standing in for ChatGPT, on one real profile (`intuitive-reader`). How to reproduce: [bench/README.md](bench/README.md).
+
+![End-to-end latency before and after: p50 −36%, p95 −17%](docs/images/benchmark.svg)
+
+| Model | Tune batches | Finished | p50 | p95 | p99 | First voiced (p50) | Model calls | Output tokens |
+|---|---|---|---|---|---|---|---|---|
+| gpt-6.1-sol (low) | 1,3,10,30 | 300/300 | 17.4 s | 48.7 s | 126.4 s | 10.9 s | 4.0 | 987 |
+| gpt-6.1-sol (low) | 10,30,100 | 300/300 | 11.2 s | 40.3 s | 125.2 s | 11.2 s | 2.0 | 760 |
+
+Same 300 queries, both schedules run side by side, so each query is its own before/after: the new
+schedule was faster on **291 of 300**, with **66% fewer input tokens** per request (15.1k → 5.1k).
+p99 barely moves because the slowest runs are slow in the model's first answer, before MO is involved.
+Model: gpt-6.1-sol, chosen for full-length answers and reliability (gpt-6-astra hit OpenAI timeouts on
+the test day; on a 20-query check all three models tried got faster).
 
 ## Privacy
 

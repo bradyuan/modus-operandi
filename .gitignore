@@ -4,3 +4,9 @@ CLAUDE.local.md
 .venv/
 __pycache__/
 .pytest_cache/
+bench/data/
+bench/work/
+bench/results/
+bench/profiles/
+.env
+bench/logs/

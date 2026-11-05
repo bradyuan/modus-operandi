@@ -29,7 +29,7 @@ TUNES_PROMPT_VERSION = "tunes-v1"  # tune passes
 PROMPT = (Path(__file__).parent / "prompts" / f"{PROMPT_VERSION}.txt").read_text()
 TUNES_PROMPT = (Path(__file__).parent / "prompts" / f"{TUNES_PROMPT_VERSION}.txt").read_text()
 BATCH_WORDS = 3000
-TUNE_BATCHES = (1, 3, 10, 30)    # tunes per pass, then 100s ("rule of 3s")
+TUNE_BATCHES = (10, 30, 100)    # tunes per pass, then ×3 each pass: passes grow ~log₃ N (was 1, 3, 10, 30)
 PICKUP_SECONDS = 20         # ChatGPT hasn't even started on the user's Continue → offer Retry sooner
 STALL_SECONDS = 90          # no next step from ChatGPT for this long → the window offers "Continue?"
 WAITING_EXPIRES = 24 * 3600  # a run that never got a voice is dropped after this
@@ -53,10 +53,10 @@ def batches(seeds: list[dict[str, Any]], budget: int = BATCH_WORDS) -> list[list
 
 
 def tune_batches(ids: list[str]) -> list[list[str]]:
-    """Ranked tune ids in batches of 1, 3, 10, 30, then 100 at a time."""
-    out, i, k = [], 0, 0
+    """Ranked tune ids in batches of 10, 30, 100, then ×3 each pass (300, 900, …): ~log₃ N passes."""
+    out, i, k, size = [], 0, 0, 0
     while i < len(ids):
-        size = TUNE_BATCHES[k] if k < len(TUNE_BATCHES) else 100
+        size = TUNE_BATCHES[k] if k < len(TUNE_BATCHES) else size * 3
         out.append(ids[i:i + size])
         i, k = i + size, k + 1
     return out

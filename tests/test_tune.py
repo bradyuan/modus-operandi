@@ -141,8 +141,10 @@ def test_output_hands_out_tunes_after_seeds_in_batches_of_1_3_10_30(chats):
 
 def test_tune_batch_sizes_follow_the_rule_of_threes():
     ids = [str(i) for i in range(50)]
-    assert [len(b) for b in runs.tune_batches(ids)] == [1, 3, 10, 30, 6]
-    assert [len(b) for b in runs.tune_batches([str(i) for i in range(150)])] == [1, 3, 10, 30, 100, 6]
+    assert [len(b) for b in runs.tune_batches(ids)] == [10, 30, 10]
+    assert [len(b) for b in runs.tune_batches([str(i) for i in range(150)])] == [10, 30, 100, 10]
+    assert [len(b) for b in runs.tune_batches([str(i) for i in range(1000)])] == [10, 30, 100, 300, 560]
+    assert len(runs.tune_batches([str(i) for i in range(100_000)])) == 9  # log₃, not linear
 
 
 def test_tunes_tab_lists_and_deletes_without_confirmation(chats):

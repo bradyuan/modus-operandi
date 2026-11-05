@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="184" viewBox="0 0 720 184" font-family="-apple-system,BlinkMacSystemFont,Segoe UI,Helvetica,Arial,sans-serif" role="img" aria-label="End-to-end latency per model: p50, p95, p99">
+<style>.bg{fill:#fcfcfb}.t1{fill:#0b0b0b}.t2{fill:#52514e}.grid{stroke:#e4e3df}.p50{fill:#2a78d6}.p95{fill:#2a78d6;fill-opacity:.35}.p99{stroke:#0b0b0b}@media (prefers-color-scheme:dark){.bg{fill:#1a1a19}.t1{fill:#f0efec}.t2{fill:#c3c2b7}.grid{stroke:#3a3a37}.p50{fill:#3987e5}.p95{fill:#3987e5;fill-opacity:.4}.p99{stroke:#f0efec}}</style>
+<rect class="bg" width="720" height="184" rx="8"/>
+<text class="t1" x="16" y="26" font-size="15" font-weight="600">End-to-end latency, seconds</text><text class="t1" x="704" y="26" font-size="13" font-weight="600" text-anchor="end">p50 −36% · p95 −17%</text>
+<text class="t2" x="16" y="44" font-size="12">bar = p50 · lighter = to p95 · tick = p99</text>
+<line class="grid" x1="230.0" x2="230.0" y1="52" y2="156"/><text class="t2" x="230.0" y="172" font-size="11" text-anchor="middle">0</text>
+<line class="grid" x1="314.0" x2="314.0" y1="52" y2="156"/><text class="t2" x="314.0" y="172" font-size="11" text-anchor="middle">30</text>
+<line class="grid" x1="398.0" x2="398.0" y1="52" y2="156"/><text class="t2" x="398.0" y="172" font-size="11" text-anchor="middle">60</text>
+<line class="grid" x1="482.0" x2="482.0" y1="52" y2="156"/><text class="t2" x="482.0" y="172" font-size="11" text-anchor="middle">90</text>
+<line class="grid" x1="566.0" x2="566.0" y1="52" y2="156"/><text class="t2" x="566.0" y="172" font-size="11" text-anchor="middle">120</text>
+<line class="grid" x1="650.0" x2="650.0" y1="52" y2="156"/><text class="t2" x="650.0" y="172" font-size="11" text-anchor="middle">150</text>
+<text class="t1" x="16" y="75" font-size="13" font-weight="600">tunes 1, 3, 10, 30</text><text class="t2" x="16" y="91" font-size="11">gpt-6.1-sol · 4 model calls</text>
+<rect class="p95" x="230.0" y="71" width="136.3" height="16" rx="4"/><rect class="p50" x="230.0" y="71" width="48.8" height="16" rx="4"/><line class="p99" x1="584.0" x2="584.0" y1="67" y2="91" stroke-width="2"/><text class="t1" x="592.0" y="83" font-size="11">17 / 49 / 126</text>
+<text class="t1" x="16" y="121" font-size="13" font-weight="600">tunes 10, 30, 100</text><text class="t2" x="16" y="137" font-size="11">gpt-6.1-sol · 2 model calls</text>
+<rect class="p95" x="230.0" y="117" width="112.8" height="16" rx="4"/><rect class="p50" x="230.0" y="117" width="31.2" height="16" rx="4"/><line class="p99" x1="580.6" x2="580.6" y1="113" y2="137" stroke-width="2"/><text class="t1" x="588.6" y="129" font-size="11">11 / 40 / 125</text>
+</svg>

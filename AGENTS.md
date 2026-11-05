@@ -33,7 +33,7 @@ Goal: cut ~2h of reading/synthesis and ~2h of writing down to minutes each.
    No compaction.
 5. **Seeding:** the user pastes a perfect example into the MO box; stored verbatim. Seeds from other
    authors are allowed, stay private, and are never committed or shipped.
-6. **Output:** seeds first, then tune boxes ranked by rounds (most first), in passes of 1, 3, 10, 30, …
+6. **Output:** seeds first, then tune boxes ranked by rounds (most first), in passes growing ×3 (10, 30, 100, 300, …)
    Each pass gets the initial response, the current version, and its batch. The MO window always
    shows the best version so far (availability over consistency) with "x% voice loaded" (the share
    of the voice's seed words already passed through). Below 100%, a stalled run offers
