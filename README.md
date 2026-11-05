@@ -11,26 +11,6 @@ Both come from the same problem: **what you teach the model doesn't stick. As th
 its answers drift away from your preferences, and nothing checks that it still follows them.**
 Another reminder only adds another prompt.
 
-### The idea
-
-**ChatGPT produces content. MO keeps the books. You do all the evaluating.**
-
-- **MO doesn't trust the model.** It runs no checks, interprets no text, and makes no AI calls. It
-  stores your judgments verbatim, decides what ChatGPT sees and in what order, and refuses steps out
-  of order.
-- **You are the only judge.** Picks, notes, and seeds go from the MO window straight to MO, signed
-  with a per-window key ChatGPT can't see. ChatGPT has no tool that records an evaluation.
-- **Gaps are visible, never silent.** The window always shows the best version so far and how much of
-  your voice has been applied ("72% voice loaded"); a partial result never looks finished.
-
-MO is an MCP server and in-chat app for ChatGPT. It keeps a store of *your own judgments* — writing
-you consider perfect (**seeds**) and A/B/C choices you made until a passage was right (**tunes**) — and
-makes ChatGPT work through all of it, in order, before you see an answer.
-
-> **Status:** v1, hosted on Fly.io with sign-in, in daily personal use. Not yet listed in ChatGPT's app
-> directory. Design: [docs/v1/DESIGN.md](docs/v1/DESIGN.md) · hosting: [docs/v1/HOSTING.md](docs/v1/HOSTING.md) ·
-> what building it taught: [docs/v1/LESSONS.md](docs/v1/LESSONS.md).
-
 ## Setup
 
 Takes about two minutes in ChatGPT, on a plan with developer mode:
@@ -56,6 +36,19 @@ Takes about two minutes in ChatGPT, on a plan with developer mode:
 
 ## How it works
 
+MO is an MCP server and in-chat app that stores writing you consider perfect (**seeds**) and your
+preferences, captured through choices and notes (**tunes**). It makes ChatGPT work through them in order.
+
+**ChatGPT produces content. MO keeps the books. You do all the evaluating.**
+
+- **MO doesn't trust the model.** It runs no checks, interprets no text, and makes no AI calls. It
+  stores your judgments verbatim, decides what ChatGPT sees and in what order, and refuses steps out
+  of order.
+- **You are the only judge.** Picks, notes, and seeds go from the MO window straight to MO, signed
+  with a per-window key ChatGPT can't see. ChatGPT has no tool that records an evaluation.
+- **Gaps are visible, never silent.** The window always shows the best version so far and how much of
+  your voice has been applied ("72% voice loaded"); a partial result never looks finished.
+
 ```
  you ── "@MO explain X" ──► ChatGPT writes its normal answer ──► mo_output(initial)
                                                                      │
@@ -72,6 +65,10 @@ Takes about two minutes in ChatGPT, on a plan with developer mode:
   points (1, 3, 10, 30, …), pass order, and what's stored are fixed code. Same store → same batches.
 - **Visible where ChatGPT acts:** whether it rewrote well is yours to judge; whether it skipped a
   pass, stalled, or never picked up a message shows in the window and the trace.
+
+> **Status:** v1, hosted on Fly.io with sign-in, in daily personal use. Not yet listed in ChatGPT's app
+> directory. Design: [docs/v1/DESIGN.md](docs/v1/DESIGN.md) · hosting: [docs/v1/HOSTING.md](docs/v1/HOSTING.md) ·
+> what building it taught: [docs/v1/LESSONS.md](docs/v1/LESSONS.md).
 
 ## Observability
 
