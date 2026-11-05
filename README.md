@@ -5,11 +5,19 @@
 ## Why MO
 
 AI explanations are generic: they don't know which analogies click for you or how deep to go. AI
-writing drifts toward AI voice, and long pieces lose yours.
+writing drifts toward AI voice, and long pieces lose yours. Both come from the same problem: **what
+you teach the model doesn't stick.**
 
-Both come from the same problem: **what you teach the model doesn't stick. As the prompts change,
-its answers drift away from your preferences, and nothing checks that it still follows them.**
-Another reminder only adds another prompt.
+**Before:** ChatGPT
+
+![ChatGPT's answer: a definition of each term](docs/images/before-chatgpt.png)
+
+**After:** ChatGPT through MO, in my `intuitive-reader` voice
+
+![MO's answer: one running example with real numbers](docs/images/after-mo.png)
+
+Same question, same facts. The voice learned "explain with one running example" from my tunes
+(A/B/C picks and notes), and now explains that way on its own.
 
 ## Setup
 
